@@ -5,18 +5,15 @@ This test is skipped automatically when GEMINI_API_KEY is not set.
 Run manually with:
     python -m pytest tests/test_integration_live.py -v -s
 
-It creates minimal synthetic media files (a real JPEG, a tiny MP4, and a PDF)
-and drives the complete pipeline:
-  Ingestion (Gemini) → Domain agents → Synthesis (Pioneer/fallback) → Safety validation
+Uses the real house video from Datasets/Videos/ and creates synthetic photo/PDF files.
+Drives the complete pipeline:
+  Ingestion (Gemini 2.5 Flash) → Domain agents → Synthesis (Pioneer DeepSeek-V3.1) → Safety validation
 """
 
 from __future__ import annotations
 
 import asyncio
-import io
 import struct
-import tempfile
-import zlib
 from pathlib import Path
 
 import pytest
@@ -28,6 +25,9 @@ pytestmark = pytest.mark.skipif(
     not config.gemini.api_key,
     reason="GEMINI_API_KEY not set — skipping live integration tests",
 )
+
+# Real house video path
+HOUSE_VIDEO = Path("Datasets/Videos/videoplayback.mp4")
 
 
 # ============================================================================
@@ -151,7 +151,7 @@ startxref
 
 
 class TestLivePipeline:
-    """End-to-end pipeline tests using real Gemini API calls."""
+    """End-to-end pipeline tests using real Gemini and Pioneer API calls."""
 
     @pytest.mark.asyncio
     async def test_process_pdf_live(self, tmp_path):
@@ -193,30 +193,50 @@ class TestLivePipeline:
               f"confidence={result.metadata.confidence_score:.2f}")
 
     @pytest.mark.asyncio
-    async def test_process_video_live(self, tmp_path):
-        """process_video must extract SpatialData from a real MP4 via Gemini."""
+    async def test_process_video_live(self):
+        """process_video must extract SpatialData from the real house video via Gemini."""
         from src.agents.ingestion.agent import process_video
         from src.common.schemas import SpatialData
 
-        video_path = tmp_path / "roof.mp4"
-        _make_minimal_mp4(video_path)
+        assert HOUSE_VIDEO.exists(), f"House video not found: {HOUSE_VIDEO}"
 
-        result = await process_video(video_path)
+        result = await process_video(HOUSE_VIDEO)
 
         assert isinstance(result, SpatialData)
         assert result.roof.total_usable_area_m2 > 0
         assert len(result.roof.faces) >= 1
         assert result.metadata.confidence_score >= 0.0
-        print(f"\n✓ process_video: roof_area={result.roof.total_usable_area_m2}m², "
+        print(f"\n✓ process_video (real house): roof_area={result.roof.total_usable_area_m2}m², "
               f"faces={len(result.roof.faces)}, "
               f"typology={result.roof.typology.value}, "
               f"confidence={result.metadata.confidence_score:.2f}")
 
     @pytest.mark.asyncio
-    async def test_full_domain_pipeline_live(self, tmp_path):
+    async def test_pioneer_pricing_live(self):
+        """Pioneer SLM must return real component pricing via DeepSeek-V3.1."""
+        from src.agents.synthesis.pioneer_client import get_component_pricing
+
+        pricing = await get_component_pricing(
+            total_kwp=6.4,
+            battery_kwh=10.0,
+            heat_pump_kw=10.0,
+        )
+
+        assert pricing.source == "pioneer_slm", f"Expected pioneer_slm, got: {pricing.source}"
+        assert pricing.pv_cost_eur > 0
+        assert pricing.battery_cost_eur > 0
+        assert pricing.heat_pump_cost_eur > 0
+        print(f"\n✓ Pioneer pricing (DeepSeek-V3.1):")
+        print(f"  PV ({6.4}kWp): €{pricing.pv_cost_eur:,.0f}")
+        print(f"  Battery ({10.0}kWh): €{pricing.battery_cost_eur:,.0f}")
+        print(f"  Heat pump ({10.0}kW): €{pricing.heat_pump_cost_eur:,.0f}")
+        print(f"  Total: €{pricing.pv_cost_eur + pricing.battery_cost_eur + pricing.heat_pump_cost_eur:,.0f}")
+
+    @pytest.mark.asyncio
+    async def test_full_pipeline_with_real_video(self, tmp_path):
         """
-        Full domain pipeline: Ingestion → domain agents → Synthesis → Safety validation.
-        Uses real Gemini for ingestion; Pioneer SLM or rule-based fallback for synthesis.
+        Full end-to-end pipeline using the real house video + synthetic photo/PDF.
+        Ingestion via Gemini 2.5 Flash → domain agents → Synthesis via Pioneer DeepSeek-V3.1.
         """
         from src.agents.ingestion.agent import process_pdf, process_photo, process_video
         from src.agents.structural.agent import run as structural_run
@@ -227,29 +247,43 @@ class TestLivePipeline:
         from src.agents.safety.validator import validate_handoff
         from src.common.schemas import FinalProposal
 
-        # Create synthetic media files
-        video_path = tmp_path / "roof.mp4"
+        assert HOUSE_VIDEO.exists(), f"House video not found: {HOUSE_VIDEO}"
+
+        # Create synthetic photo and PDF (real video is used for spatial data)
         photo_path = tmp_path / "panel.jpg"
         pdf_path = tmp_path / "bill.pdf"
-        _make_minimal_mp4(video_path)
         _make_minimal_jpeg(photo_path)
         _make_minimal_pdf(pdf_path)
 
+        print(f"\n{'='*60}")
+        print(f"FULL PIPELINE TEST — Gemini {config.gemini.model_name} + Pioneer {config.pioneer.model_name}")
+        print(f"{'='*60}")
+
+        # ----------------------------------------------------------------
+        # Stage 1: Ingestion — run all three concurrently
+        # ----------------------------------------------------------------
         print("\n--- Stage 1: Ingestion (Gemini) ---")
         spatial_data, electrical_data, consumption_data = await asyncio.gather(
-            process_video(video_path),
+            process_video(HOUSE_VIDEO),
             process_photo(photo_path),
             process_pdf(pdf_path),
         )
-        print(f"  SpatialData: roof_area={spatial_data.roof.total_usable_area_m2}m², "
+        print(f"  ✓ SpatialData: roof_area={spatial_data.roof.total_usable_area_m2}m², "
+              f"typology={spatial_data.roof.typology.value}, "
+              f"faces={len(spatial_data.roof.faces)}, "
               f"confidence={spatial_data.metadata.confidence_score:.2f}")
-        print(f"  ElectricalData: {electrical_data.main_supply.amperage_A}A "
+        print(f"  ✓ ElectricalData: {electrical_data.main_supply.amperage_A}A "
               f"{electrical_data.main_supply.phases}ph, "
+              f"breakers={len(electrical_data.breakers)}, "
               f"confidence={electrical_data.metadata.confidence_score:.2f}")
-        print(f"  ConsumptionData: {consumption_data.annual_kwh}kWh/yr, "
+        print(f"  ✓ ConsumptionData: {consumption_data.annual_kwh:.0f}kWh/yr, "
               f"confidence={consumption_data.metadata.confidence_score:.2f}")
 
+        # ----------------------------------------------------------------
+        # Safety Gate 1
+        # ----------------------------------------------------------------
         print("\n--- Safety Gate 1 ---")
+        all_valid = True
         for obj, schema, src in [
             (spatial_data, "SpatialData", "ingestion"),
             (electrical_data, "ElectricalData", "ingestion"),
@@ -258,23 +292,38 @@ class TestLivePipeline:
             _, result = validate_handoff(obj.model_dump(mode="json"), schema, src)
             status = "✓ PASS" if result.valid else f"✗ FAIL ({len(result.errors)} errors)"
             print(f"  {schema}: {status}")
-            if result.warnings:
-                for w in result.warnings:
-                    print(f"    ⚠ {w}")
+            for w in result.warnings:
+                print(f"    ⚠ {w}")
+            if not result.valid:
+                all_valid = False
+                for e in result.errors:
+                    print(f"    ✗ [{e.code}] {e.message}")
 
+        # ----------------------------------------------------------------
+        # Stage 2: Domain agents (deterministic, no API calls)
+        # ----------------------------------------------------------------
         print("\n--- Stage 2: Domain agents ---")
         module_layout = structural_run(spatial_data)
         electrical_assessment = electrical_run(electrical_data)
         thermal_load = thermodynamic_run(spatial_data, consumption_data)
         behavioral_profile = behavioral_run(consumption_data)
-        print(f"  ModuleLayout: {module_layout.total_kwp}kWp, {module_layout.total_panels} panels")
-        print(f"  ElectricalAssessment: sufficient={electrical_assessment.current_capacity_sufficient}, "
-              f"upgrades={len(electrical_assessment.upgrades_required)}")
-        print(f"  ThermalLoad: {thermal_load.design_heat_load_kw}kW, "
-              f"HP={thermal_load.heat_pump_recommendation.capacity_kw}kW")
-        print(f"  BehavioralProfile: {behavioral_profile.occupancy_pattern.value}, "
-              f"battery={behavioral_profile.battery_recommendation.capacity_kwh}kWh")
 
+        print(f"  ✓ ModuleLayout: {module_layout.total_kwp:.1f}kWp, "
+              f"{module_layout.total_panels} panels, "
+              f"{len(module_layout.string_config.strings)} strings")
+        print(f"  ✓ ElectricalAssessment: sufficient={electrical_assessment.current_capacity_sufficient}, "
+              f"upgrades={len(electrical_assessment.upgrades_required)}, "
+              f"inverter={electrical_assessment.inverter_recommendation.type.value}")
+        print(f"  ✓ ThermalLoad: design={thermal_load.design_heat_load_kw:.1f}kW, "
+              f"HP={thermal_load.heat_pump_recommendation.capacity_kw:.0f}kW, "
+              f"cylinder={thermal_load.dhw_requirement.cylinder_volume_litres}L")
+        print(f"  ✓ BehavioralProfile: {behavioral_profile.occupancy_pattern.value}, "
+              f"battery={behavioral_profile.battery_recommendation.capacity_kwh:.1f}kWh, "
+              f"savings=€{behavioral_profile.estimated_annual_savings_eur:.0f}/yr")
+
+        # ----------------------------------------------------------------
+        # Safety Gate 2
+        # ----------------------------------------------------------------
         print("\n--- Safety Gate 2 ---")
         for obj, schema, src in [
             (module_layout, "ModuleLayout", "structural"),
@@ -285,37 +334,58 @@ class TestLivePipeline:
             _, result = validate_handoff(obj.model_dump(mode="json"), schema, src)
             status = "✓ PASS" if result.valid else f"✗ FAIL ({len(result.errors)} errors)"
             print(f"  {schema}: {status}")
+            for w in result.warnings:
+                print(f"    ⚠ {w}")
+            if not result.valid:
+                all_valid = False
 
-        print("\n--- Stage 3: Synthesis (Pioneer SLM / fallback) ---")
+        # ----------------------------------------------------------------
+        # Stage 3: Synthesis (Pioneer SLM)
+        # ----------------------------------------------------------------
+        print("\n--- Stage 3: Synthesis (Pioneer DeepSeek-V3.1) ---")
         final_proposal = await synthesis_run(
             module_layout=module_layout,
             thermal_load=thermal_load,
             electrical_assessment=electrical_assessment,
             behavioral_profile=behavioral_profile,
         )
-        print(f"  FinalProposal: run_id={final_proposal.metadata.pipeline_run_id}")
-        print(f"  Cost: €{final_proposal.financial_summary.total_cost_eur:,.0f}, "
-              f"Savings: €{final_proposal.financial_summary.annual_savings_eur:,.0f}/yr, "
-              f"Payback: {final_proposal.financial_summary.payback_years:.1f}yr")
-        print(f"  Signoff: required={final_proposal.human_signoff.required}, "
+        print(f"  ✓ FinalProposal: run_id={final_proposal.metadata.pipeline_run_id}")
+        print(f"  ✓ System: {final_proposal.system_design.pv.total_kwp}kWp PV + "
+              f"{final_proposal.system_design.battery.capacity_kwh}kWh battery + "
+              f"{final_proposal.system_design.heat_pump.capacity_kw}kW HP")
+        print(f"  ✓ Financials: cost=€{final_proposal.financial_summary.total_cost_eur:,.0f}, "
+              f"savings=€{final_proposal.financial_summary.annual_savings_eur:,.0f}/yr, "
+              f"payback={final_proposal.financial_summary.payback_years:.1f}yr")
+        print(f"  ✓ Signoff: required={final_proposal.human_signoff.required}, "
               f"status={final_proposal.human_signoff.status.value}")
+        if final_proposal.compliance.electrical_upgrades:
+            print(f"  ⚠ Electrical upgrades: {len(final_proposal.compliance.electrical_upgrades)}")
+        for note in final_proposal.compliance.regulatory_notes:
+            print(f"    • {note}")
 
+        # ----------------------------------------------------------------
+        # Safety Gate 3
+        # ----------------------------------------------------------------
         print("\n--- Safety Gate 3 ---")
         _, result = validate_handoff(
             final_proposal.model_dump(mode="json"), "FinalProposal", "synthesis"
         )
         status = "✓ PASS" if result.valid else f"✗ FAIL ({len(result.errors)} errors)"
         print(f"  FinalProposal: {status}")
-        if result.warnings:
-            for w in result.warnings:
-                print(f"    ⚠ {w}")
+        for w in result.warnings:
+            print(f"    ⚠ {w}")
+        if not result.valid:
+            for e in result.errors:
+                print(f"    ✗ [{e.code}] {e.message}")
 
-        # Assertions
+        print(f"\n{'='*60}")
+        print("✓ FULL PIPELINE COMPLETED SUCCESSFULLY")
+        print(f"{'='*60}")
+
+        # Final assertions
         assert isinstance(final_proposal, FinalProposal)
         assert final_proposal.human_signoff.required is True
         assert final_proposal.human_signoff.status.value == "pending"
         assert final_proposal.financial_summary.total_cost_eur > 0
         assert final_proposal.financial_summary.payback_years >= 0
-        assert result.valid, f"FinalProposal failed Safety Gate 3: {result.errors}"
-
-        print("\n✓ Full pipeline completed successfully!")
+        assert result.valid, f"FinalProposal failed Safety Gate 3: {[e.message for e in result.errors]}"
