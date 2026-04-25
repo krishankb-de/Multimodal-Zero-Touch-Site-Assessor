@@ -1,5 +1,34 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+export interface AssessResponse {
+  pipeline_run_id: string;
+  status: string;
+}
+
+export async function uploadMedia(
+  video: File,
+  photo: File,
+  bill: File,
+): Promise<AssessResponse> {
+  const formData = new FormData();
+  formData.append("video", video);
+  formData.append("photo", photo);
+  formData.append("bill", bill);
+  const res = await fetch(`${API_URL}/api/v1/assess`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(
+      typeof err.detail === "object"
+        ? err.detail.message ?? "Assessment failed"
+        : err.detail ?? "Assessment failed",
+    );
+  }
+  return res.json();
+}
+
 export interface FinalProposal {
   system_design: {
     pv: { total_kwp: number; panel_count: number; inverter_type: string };

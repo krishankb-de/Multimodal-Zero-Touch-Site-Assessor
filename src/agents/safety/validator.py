@@ -82,7 +82,7 @@ def validate_schema(
         ]
 
     try:
-        instance = model_class.model_validate(data, strict=False)
+        instance = model_class.model_validate(data, strict=True)
         return instance, []
     except PydanticValidationError as exc:
         errors: list[ValidationError] = []

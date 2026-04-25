@@ -607,3 +607,52 @@ class ValidationResult(BaseModel):
     errors: list[ValidationError] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     timestamp: datetime
+
+
+# ============================================================================
+# 10. HEMS — EEBus-compatible telemetry + optimization delta
+# ============================================================================
+
+
+class TelemetryPoint(BaseModel):
+    """EEBus-style smart meter reading (SMGW / EMC measurement)."""
+
+    model_config = {"extra": "forbid"}
+
+    timestamp: datetime
+    kwh_imported: float = Field(ge=0, description="Grid import since last reading")
+    kwh_exported: float = Field(ge=0, description="Grid export (PV surplus) since last reading")
+    occupancy_hint: Optional[OccupancyPattern] = None
+
+
+class InstallationRecord(BaseModel):
+    """Post-install record linking a pipeline run to live telemetry."""
+
+    model_config = {"extra": "forbid"}
+
+    installation_id: str
+    pipeline_run_id: str
+    baseline_consumption: ConsumptionData
+    baseline_profile: BehavioralProfile
+    telemetry: list[TelemetryPoint] = Field(default_factory=list)
+    created_at: datetime
+
+
+class OptimizationDelta(BaseModel):
+    """Output of the HEMS quarterly reoptimization pass."""
+
+    model_config = {"extra": "forbid"}
+
+    installation_id: str
+    drift_detected: bool
+    drift_reason: str
+    old_occupancy: OccupancyPattern
+    new_occupancy: OccupancyPattern
+    old_battery_kwh: float
+    new_battery_kwh: float
+    battery_delta_kwh: float
+    old_savings_eur: Optional[float]
+    new_savings_eur: Optional[float]
+    savings_delta_eur: Optional[float]
+    new_profile: BehavioralProfile
+    optimized_at: datetime

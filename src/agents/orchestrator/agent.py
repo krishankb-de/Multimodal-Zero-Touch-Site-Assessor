@@ -156,7 +156,7 @@ async def _execute_pipeline(
         (electrical_data, "ElectricalData", "ingestion"),
         (consumption_data, "ConsumptionData", "ingestion"),
     ]:
-        _, result = validate_handoff(data_obj.model_dump(mode="json"), schema_name, agent_name)
+        _, result = validate_handoff(data_obj.model_dump(), schema_name, agent_name)
         if not result.valid:
             logger.warning("[%s] Safety Gate 1 rejected %s: %d errors",
                            pipeline_run_id, schema_name, len(result.errors))
@@ -237,7 +237,7 @@ async def _execute_pipeline(
         (thermal_load, "ThermalLoad", "thermodynamic"),
         (behavioral_profile, "BehavioralProfile", "behavioral"),
     ]:
-        _, result = validate_handoff(data_obj.model_dump(mode="json"), schema_name, agent_name)
+        _, result = validate_handoff(data_obj.model_dump(), schema_name, agent_name)
         if not result.valid:
             logger.warning("[%s] Safety Gate 2 rejected %s: %d errors",
                            pipeline_run_id, schema_name, len(result.errors))
@@ -265,6 +265,8 @@ async def _execute_pipeline(
                 thermal_load=thermal_load,
                 electrical_assessment=electrical_assessment,
                 behavioral_profile=behavioral_profile,
+                consumption_data=consumption_data,
+                spatial_data=spatial_data,
             ),
             AGENT_TIMEOUT_SECONDS,
         )

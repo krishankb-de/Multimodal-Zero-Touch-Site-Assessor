@@ -23,7 +23,8 @@ app.add_middleware(
 )
 
 # Import and include routers after app is created to avoid circular imports
-from src.web.routes import assess, proposals  # noqa: E402
+from src.web.routes import assess, installations, proposals  # noqa: E402
 
 app.include_router(assess.router, prefix="/api/v1")
 app.include_router(proposals.router, prefix="/api/v1")
+app.include_router(installations.router, prefix="/api/v1")

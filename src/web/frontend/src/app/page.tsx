@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { FinalProposal } from "@/lib/api";
 
 // In a real app this would fetch from a list endpoint.
 // For now we use localStorage to track known pipeline_run_ids.
 export default function ProposalListPage() {
+  const router = useRouter();
   const [proposals, setProposals] = useState<FinalProposal[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -32,7 +34,15 @@ export default function ProposalListPage() {
 
   return (
     <main className="min-h-screen bg-gray-50 p-8">
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Installer Dashboard</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">Installer Dashboard</h1>
+        <button
+          onClick={() => router.push("/upload")}
+          className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+        >
+          + New Assessment
+        </button>
+      </div>
       <h2 className="text-lg font-semibold text-gray-700 mb-4">
         Pending Proposals ({pending.length})
       </h2>

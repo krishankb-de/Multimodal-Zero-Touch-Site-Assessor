@@ -12,10 +12,12 @@ import uuid
 from datetime import datetime, timezone
 
 from src.agents.synthesis import pioneer_client
+from src.agents.synthesis.reonic_dataset import CustomerProfile
 from src.common.schemas import (
     BatteryDesign,
     BehavioralProfile,
     Compliance,
+    ConsumptionData,
     ElectricalAssessment,
     FinalProposal,
     FinancialSummary,
@@ -25,9 +27,31 @@ from src.common.schemas import (
     ProposalMetadata,
     PVDesign,
     SignoffStatus,
+    SpatialData,
     SystemDesign,
     ThermalLoad,
 )
+
+
+def _build_customer_profile(
+    consumption_data: ConsumptionData | None,
+    spatial_data: SpatialData | None,
+) -> CustomerProfile | None:
+    """Build a Reonic-retrieval feature vector from ingestion outputs."""
+    if consumption_data is None:
+        return None
+    house_size_sqm: float | None = None
+    if spatial_data is not None:
+        ur = spatial_data.utility_room
+        house_size_sqm = ur.length_m * ur.width_m * 8  # rough proxy: utility footprint × floors
+    return CustomerProfile(
+        energy_demand_wh=float(consumption_data.annual_kwh) * 1000.0,
+        energy_price_per_wh=float(consumption_data.tariff.rate_per_kwh) / 1000.0,
+        has_ev=bool(consumption_data.has_ev),
+        heating_existing_type=(consumption_data.heating_fuel.value
+                               if consumption_data.heating_fuel else "none"),
+        house_size_sqm=house_size_sqm,
+    )
 
 
 async def run(
@@ -35,6 +59,8 @@ async def run(
     thermal_load: ThermalLoad,
     electrical_assessment: ElectricalAssessment,
     behavioral_profile: BehavioralProfile,
+    consumption_data: ConsumptionData | None = None,
+    spatial_data: SpatialData | None = None,
 ) -> FinalProposal:
     """
     Assemble a FinalProposal from all domain agent outputs.
@@ -49,12 +75,14 @@ async def run(
     """
 
     # ------------------------------------------------------------------
-    # 1. Component pricing
+    # 1. Component pricing + Reonic-grounded recommendations
     # ------------------------------------------------------------------
+    customer_profile = _build_customer_profile(consumption_data, spatial_data)
     pricing = await pioneer_client.get_component_pricing(
         total_kwp=module_layout.total_kwp,
         battery_kwh=behavioral_profile.battery_recommendation.capacity_kwh,
         heat_pump_kw=thermal_load.heat_pump_recommendation.capacity_kw,
+        customer_profile=customer_profile,
     )
 
     # ------------------------------------------------------------------
@@ -63,18 +91,22 @@ async def run(
     pv = PVDesign(
         total_kwp=module_layout.total_kwp,
         panel_count=module_layout.total_panels,
+        panel_model=pricing.panel_model,
         inverter_type=electrical_assessment.inverter_recommendation.type.value,
+        inverter_model=pricing.inverter_model,
     )
 
     battery = BatteryDesign(
         included=True,
         capacity_kwh=behavioral_profile.battery_recommendation.capacity_kwh,
+        model=pricing.battery_model,
     )
 
     heat_pump = HeatPumpDesign(
         included=True,
         capacity_kw=thermal_load.heat_pump_recommendation.capacity_kw,
         type=thermal_load.heat_pump_recommendation.type.value,
+        model=pricing.heat_pump_model,
         cop=thermal_load.heat_pump_recommendation.cop_estimate,
         cylinder_litres=thermal_load.dhw_requirement.cylinder_volume_litres,
     )
@@ -122,6 +154,11 @@ async def run(
     ]
     if pricing.warning:
         regulatory_notes.append(pricing.warning)
+    if pricing.reonic_neighbor_ids:
+        regulatory_notes.append(
+            f"Design grounded in {len(pricing.reonic_neighbor_ids)} Reonic historical projects "
+            f"(source={pricing.source})"
+        )
 
     compliance = Compliance(
         electrical_upgrades=electrical_upgrades,
