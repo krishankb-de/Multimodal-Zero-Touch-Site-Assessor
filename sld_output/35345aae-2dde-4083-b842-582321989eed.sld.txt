@@ -1,0 +1,36 @@
+============================================================
+  SINGLE-LINE DIAGRAM — Zero-Touch Site Assessor
+  Pipeline Run: 35345aae-2dde-4083-b842-582321989eed
+============================================================
+
+  [PV Array: 8.0 kWp / 20 panels (Sunpro PV Module 463W TOPCon Glass-Glass Promo)]
+         |
+         | DC
+         ↓
+  [Inverter (hybrid) — Sigenergy Hybrid Inverter 10kW]
+         |
+         | AC
+         ↓
+  ├── [Battery: 10.0 kWh]
+  |
+  [Main AC Bus / Consumer Distribution Board]
+         |
+         | ←→ Grid (bi-directional metering)
+         ↓
+  [Smart Meter / Main Meter]
+         |
+  [Grid]
+
+  Branch A: [Heat Pump: 10 kW air_source]
+  Branch B: [DHW Cylinder: 200 L]
+
+============================================================
+  NOTES
+============================================================
+  • Human installer sign-off required before proposal delivery
+  • Climate data: region=Hamburg, irradiance=960 kWh/m²/year, design_outdoor_temp=-12.0°C
+  • Pioneer SLM unavailable — using rule-based Reonic dataset pricing
+  • Design grounded in 5 Reonic historical projects (source=rule_based_fallback)
+
+  Human sign-off: PENDING
+============================================================

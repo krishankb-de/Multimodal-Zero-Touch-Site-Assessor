@@ -54,19 +54,16 @@ def run(spatial_data: SpatialData) -> ModuleLayout:
     exclusion_zones: list[str] = []
 
     for face in spatial_data.roof.faces:
-        # Calculate obstacle area for this face
-        face_obstacles_area = sum(
-            obs.area_m2 + (obs.buffer_m * 2 * (obs.area_m2 ** 0.5))  # Buffer approximation
+        face_obstacles = [
+            (obs.area_m2, obs.buffer_m)
             for obs in spatial_data.roof.obstacles
             if obs.face_id == face.id
-        )
+        ]
 
-        # Track which exclusion zones were applied
         for obs in spatial_data.roof.obstacles:
             if obs.face_id == face.id:
                 exclusion_zones.append(f"{obs.type.value}_on_{face.id}")
 
-        # Use face dimensions if available, otherwise estimate from area
         face_length = face.length_m if face.length_m else (face.area_m2 ** 0.5) * 1.5
         face_width = face.width_m if face.width_m else (face.area_m2 ** 0.5) / 1.5
 
@@ -74,7 +71,7 @@ def run(spatial_data: SpatialData) -> ModuleLayout:
             face_id=face.id,
             face_length_m=face_length,
             face_width_m=face_width,
-            obstacles_area_m2=face_obstacles_area,
+            obstacles=face_obstacles if face_obstacles else None,
         )
 
         placements.append(placement)

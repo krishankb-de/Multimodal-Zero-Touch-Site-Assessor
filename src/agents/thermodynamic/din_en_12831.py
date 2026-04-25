@@ -69,8 +69,8 @@ ROOF_AREA_RATIO = 1.0        # roof area ≈ floor area for single story
 WINDOW_TO_WALL_RATIO = 0.15  # 15% of wall area is windows
 FLOOR_TO_CEILING_HEIGHT = 2.5  # meters
 
-# DHW sizing: litres per person per day (EN 15316-3-1)
-DHW_LITRES_PER_PERSON = 40
+# DHW sizing: litres per person per day (DIN 4708 / EN 15316-3-1, 60°C supply)
+DHW_LITRES_PER_PERSON = 50
 
 # Occupancy estimate: persons per house_size_sqm
 OCCUPANCY_PER_SQM = 0.02  # e.g., 120m² → ~2.4 → 3 persons

@@ -421,8 +421,13 @@ def _check_behavioral_profile(
         )
         overlap = charge_range & discharge_range
         if overlap:
-            warnings.append(
-                f"Battery charge and discharge windows overlap at hours: {sorted(overlap)}"
+            errors.append(
+                ValidationError(
+                    code="BATTERY_WINDOW_OVERLAP",
+                    message=f"Battery charge and discharge windows overlap at hours: {sorted(overlap)}",
+                    field="battery_recommendation",
+                    severity=ErrorSeverity.ERROR,
+                )
             )
 
 

@@ -42,9 +42,7 @@ class MarketConfig:
 
     market: str = field(default_factory=lambda: os.getenv("DEFAULT_MARKET", "DE"))
     currency: str = field(default_factory=lambda: os.getenv("DEFAULT_CURRENCY", "EUR"))
-    design_outdoor_temp_c: float = field(
-        default_factory=lambda: float(os.getenv("DESIGN_OUTDOOR_TEMP_C", "-12"))
-    )
+    region: str = field(default_factory=lambda: os.getenv("REGION", "Hamburg"))
 
 
 @dataclass(frozen=True)

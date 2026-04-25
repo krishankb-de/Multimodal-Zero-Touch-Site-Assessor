@@ -587,3 +587,25 @@ class TestEdgeCases:
         assert result.timestamp is not None
         assert result.agent_source == "ingestion"
         assert result.schema_name == "SpatialData"
+
+    def test_battery_window_overlap_rejected(self):
+        """Overlapping charge/discharge windows must be a hard error (C3)."""
+        data = _valid_behavioral_profile()
+        # Charge 9–18, discharge 16–23 — hours 16–18 overlap
+        data["battery_recommendation"]["charge_window_start"] = 9
+        data["battery_recommendation"]["charge_window_end"] = 18
+        data["battery_recommendation"]["discharge_window_start"] = 16
+        data["battery_recommendation"]["discharge_window_end"] = 23
+        _, result = validate_handoff(data, "BehavioralProfile", "behavioral")
+        assert result.valid is False
+        assert any(e.code == "BATTERY_WINDOW_OVERLAP" for e in result.errors)
+
+    def test_battery_window_no_overlap_passes(self):
+        """Non-overlapping windows must still pass (C3 regression guard)."""
+        data = _valid_behavioral_profile()
+        data["battery_recommendation"]["charge_window_start"] = 9
+        data["battery_recommendation"]["charge_window_end"] = 15
+        data["battery_recommendation"]["discharge_window_start"] = 17
+        data["battery_recommendation"]["discharge_window_end"] = 23
+        _, result = validate_handoff(data, "BehavioralProfile", "behavioral")
+        assert result.valid is True

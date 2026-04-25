@@ -10,7 +10,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
+from src.common import climate as climate_data
+from src.common.config import config
+from src.common import sld_generator
 from src.agents.synthesis import pioneer_client
 from src.agents.synthesis.reonic_dataset import CustomerProfile
 from src.common.schemas import (
@@ -88,12 +92,16 @@ async def run(
     # ------------------------------------------------------------------
     # 2. System design
     # ------------------------------------------------------------------
+    region = config.market.region
+    annual_yield_kwh = climate_data.annual_pv_yield_kwh(module_layout.total_kwp, region)
+
     pv = PVDesign(
         total_kwp=module_layout.total_kwp,
         panel_count=module_layout.total_panels,
         panel_model=pricing.panel_model,
         inverter_type=electrical_assessment.inverter_recommendation.type.value,
         inverter_model=pricing.inverter_model,
+        annual_yield_kwh=annual_yield_kwh,
     )
 
     battery = BatteryDesign(
@@ -127,12 +135,18 @@ async def run(
         + electrical_upgrade_cost
     )
 
+    # PV export savings: yield exported at feed-in tariff (assume 30% self-consumed)
+    feed_in_rate = consumption_data.tariff.feed_in_tariff_per_kwh if (
+        consumption_data and consumption_data.tariff.feed_in_tariff_per_kwh
+    ) else 0.082
+    pv_export_savings = annual_yield_kwh * 0.70 * feed_in_rate
+
     # 200 EUR/kW/year operational savings vs gas boiler
     heat_pump_savings = thermal_load.heat_pump_recommendation.capacity_kw * 200.0
 
     annual_savings_eur = (
         behavioral_profile.estimated_annual_savings_eur or 0.0
-    ) + heat_pump_savings
+    ) + heat_pump_savings + pv_export_savings
 
     payback_years = (
         total_cost_eur / annual_savings_eur if annual_savings_eur > 0 else 0.0
@@ -150,7 +164,10 @@ async def run(
     electrical_upgrades = [u.reason for u in electrical_assessment.upgrades_required]
 
     regulatory_notes: list[str] = [
-        "Human installer sign-off required before proposal delivery"
+        "Human installer sign-off required before proposal delivery",
+        f"Climate data: region={region}, "
+        f"irradiance={climate_data.annual_irradiance_kwh_m2(region):.0f} kWh/m²/year, "
+        f"design_outdoor_temp={climate_data.design_outdoor_temp_c(region):.1f}°C",
     ]
     if pricing.warning:
         regulatory_notes.append(pricing.warning)
@@ -176,17 +193,27 @@ async def run(
     # ------------------------------------------------------------------
     # 6. Metadata
     # ------------------------------------------------------------------
+    run_id = str(uuid.uuid4())
     metadata = ProposalMetadata(
-        pipeline_run_id=str(uuid.uuid4()),
+        pipeline_run_id=run_id,
         version="1.0.0",
         generated_at=datetime.now(timezone.utc),
         all_validations_passed=None,  # Set by orchestrator after Safety Agent validation
     )
 
-    return FinalProposal(
+    proposal = FinalProposal(
         system_design=system_design,
         financial_summary=financial_summary,
         compliance=compliance,
         human_signoff=human_signoff,
         metadata=metadata,
     )
+
+    # ------------------------------------------------------------------
+    # 7. Generate SLD and attach reference
+    # ------------------------------------------------------------------
+    sld_dir = Path(__file__).resolve().parents[3] / "sld_output"
+    sld_path = sld_generator.write_sld(proposal, sld_dir)
+    proposal.compliance.single_line_diagram_ref = str(sld_path)
+
+    return proposal

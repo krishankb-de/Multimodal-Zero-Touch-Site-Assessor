@@ -13,6 +13,7 @@ import logging
 from datetime import datetime, timezone
 
 from src.common.config import config
+from src.common import climate
 from src.common.schemas import (
     CalculationMetadata,
     ConsumptionData,
@@ -82,11 +83,13 @@ def run(spatial_data: SpatialData, consumption_data: ConsumptionData) -> Thermal
     house_size_sqm = spatial_data.roof.total_usable_area_m2
     logger.info("Thermodynamic Agent: estimated house size = %.1f m²", house_size_sqm)
 
-    # Step 2: Determine design outdoor temperature from config
-    design_outdoor_temp_c = config.market.design_outdoor_temp_c
+    # Step 2: Determine design outdoor temperature from regional climate table
+    region = config.market.region
+    design_outdoor_temp_c = climate.design_outdoor_temp_c(region)
     logger.info(
-        "Thermodynamic Agent: design outdoor temp = %.1f °C (from config)",
+        "Thermodynamic Agent: design outdoor temp = %.1f °C (region=%s)",
         design_outdoor_temp_c,
+        region,
     )
 
     # building_year is not available in the current schemas — use default U-values

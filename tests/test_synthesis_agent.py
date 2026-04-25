@@ -392,7 +392,11 @@ class TestFinancialCalculations:
                 _make_electrical_assessment(),
                 _make_behavioral_profile(estimated_savings=behavioral_savings),
             )
-        expected_savings = behavioral_savings + expected_heat_pump_savings
+        # PV export savings: yield(6.4 kWp, Hamburg) * 70% exported * 0.082 EUR/kWh fallback
+        from src.common import climate as _climate
+        annual_yield = _climate.annual_pv_yield_kwh(6.4, "Hamburg")
+        pv_export_savings = annual_yield * 0.70 * 0.082
+        expected_savings = behavioral_savings + expected_heat_pump_savings + pv_export_savings
         assert result.financial_summary.annual_savings_eur == pytest.approx(expected_savings)
 
     @pytest.mark.asyncio
@@ -418,8 +422,11 @@ class TestFinancialCalculations:
                 _make_electrical_assessment(upgrades=[]),
                 _make_behavioral_profile(estimated_savings=behavioral_savings),
             )
+        from src.common import climate as _climate
+        annual_yield = _climate.annual_pv_yield_kwh(6.4, "Hamburg")
+        pv_export_savings = annual_yield * 0.70 * 0.082
         total_cost = 7680.0 + 8000.0 + 9000.0
-        annual_savings = behavioral_savings + heat_pump_savings
+        annual_savings = behavioral_savings + heat_pump_savings + pv_export_savings
         expected_payback = total_cost / annual_savings
         assert result.financial_summary.payback_years == pytest.approx(expected_payback, rel=1e-3)
 

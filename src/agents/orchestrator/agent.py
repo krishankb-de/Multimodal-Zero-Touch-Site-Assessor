@@ -111,6 +111,32 @@ async def _execute_pipeline(
     """Inner pipeline logic (wrapped by the outer timeout in run_pipeline)."""
 
     # ------------------------------------------------------------------
+    # Pre-flight — verify all input files exist and are non-empty
+    # ------------------------------------------------------------------
+    file_checks = [
+        (video_path, "video_path"),
+        (photo_path, "photo_path"),
+        (pdf_path, "pdf_path"),
+    ]
+    for path, field in file_checks:
+        if not path.exists():
+            return PipelineError(
+                pipeline_run_id=pipeline_run_id,
+                stage=PipelineStage.INGESTION.value,
+                agent_name="orchestrator",
+                error_type="validation_failure",
+                message=f"File not found: {field}={path}",
+            )
+        if path.stat().st_size == 0:
+            return PipelineError(
+                pipeline_run_id=pipeline_run_id,
+                stage=PipelineStage.INGESTION.value,
+                agent_name="orchestrator",
+                error_type="validation_failure",
+                message=f"File is empty: {field}={path}",
+            )
+
+    # ------------------------------------------------------------------
     # Stage 1 — Ingestion (three concurrent calls)
     # ------------------------------------------------------------------
     logger.info("[%s] Stage 1 — Ingestion starting", pipeline_run_id)

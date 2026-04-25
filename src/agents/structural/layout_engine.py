@@ -70,11 +70,34 @@ def calculate_usable_dimensions(
     return usable_length, usable_width, usable_area
 
 
+def _grid_cells_blocked_by_obstacle(
+    obs_area_m2: float,
+    obs_buffer_m: float,
+    cell_along_length_m: float,
+    cell_along_width_m: float,
+    gap_m: float,
+    max_cols: int,
+    max_rows: int,
+) -> int:
+    """
+    Rectangle-clip: compute how many panel grid cells are blocked by one obstacle.
+
+    Treats each obstacle as a square of side sqrt(area_m2), expands it by
+    buffer_m on all sides, then counts how many panel slots (cols × rows) that
+    expanded rectangle covers.
+    """
+    obs_side = math.sqrt(obs_area_m2)
+    blocked = obs_side + 2 * obs_buffer_m
+    cols_blocked = math.ceil(blocked / (cell_along_length_m + gap_m))
+    rows_blocked = math.ceil(blocked / (cell_along_width_m + gap_m))
+    return min(cols_blocked * rows_blocked, max_cols * max_rows)
+
+
 def fit_panels_on_face(
     face_id: str,
     face_length_m: float,
     face_width_m: float,
-    obstacles_area_m2: float = 0.0,
+    obstacles: list[tuple[float, float]] | None = None,
     panel_length_mm: int = DEFAULT_PANEL_LENGTH_MM,
     panel_width_mm: int = DEFAULT_PANEL_WIDTH_MM,
     panel_wp: int = DEFAULT_PANEL_WP,
@@ -91,7 +114,8 @@ def fit_panels_on_face(
         face_id: Identifier for the roof face.
         face_length_m: Length of the roof face in meters.
         face_width_m: Width of the roof face in meters.
-        obstacles_area_m2: Total area consumed by obstacles on this face.
+        obstacles: Per-obstacle list of (area_m2, buffer_m) tuples. Each
+            obstacle is clipped as a rectangle from the panel grid.
         panel_length_mm: Panel length in millimeters.
         panel_width_mm: Panel width in millimeters.
         panel_wp: Panel watt-peak rating.
@@ -102,7 +126,7 @@ def fit_panels_on_face(
         PanelPlacement with the optimal orientation and count.
     """
     usable_length, usable_width, _ = calculate_usable_dimensions(
-        face_length_m, face_width_m, obstacles_area_m2, setback_m
+        face_length_m, face_width_m, 0.0, setback_m
     )
 
     # Convert panel dimensions to meters
@@ -126,16 +150,19 @@ def fit_panels_on_face(
         if usable_length <= 0 or usable_width <= 0:
             continue
 
-        # How many panels fit along each axis?
         cols = int((usable_length + gap_m) / (dim_along_length + gap_m))
         rows = int((usable_width + gap_m) / (dim_along_width + gap_m))
         count = rows * cols
 
-        # Subtract panels that overlap with obstacle area (rough estimate)
-        if obstacles_area_m2 > 0:
-            panel_area = dim_along_length * dim_along_width
-            panels_lost = math.ceil(obstacles_area_m2 / panel_area)
-            count = max(0, count - panels_lost)
+        # Rectangle-clip: subtract grid cells blocked by each obstacle
+        if obstacles:
+            for obs_area, obs_buffer in obstacles:
+                cells_lost = _grid_cells_blocked_by_obstacle(
+                    obs_area, obs_buffer,
+                    dim_along_length, dim_along_width,
+                    gap_m, cols, rows,
+                )
+                count = max(0, count - cells_lost)
 
         if count > best_placement.count:
             best_placement = PanelPlacement(
