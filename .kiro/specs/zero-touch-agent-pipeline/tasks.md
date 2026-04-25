@@ -1,0 +1,252 @@
+# Implementation Plan: Zero-Touch Agent Pipeline
+
+## Overview
+
+Build out the remaining agents and full pipeline for the Multimodal Zero-Touch Site Assessor. The existing codebase provides all 9 Pydantic schemas, the Safety Agent (validator + guardrails), the Structural Agent (agent + layout engine), the Thermodynamic DIN EN 12831 calculation engine, and application config. This plan covers the Thermodynamic Agent wrapper, Electrical Agent, Behavioral Agent, Ingestion Agent, Synthesis Agent, Orchestrator Agent, FastAPI web layer, Installer Dashboard (Next.js 14), and comprehensive test coverage.
+
+## Tasks
+
+- [x] 1. Implement the Thermodynamic Agent wrapper
+  - [x] 1.1 Create `src/agents/thermodynamic/agent.py` with `run(spatial_data, consumption_data) -> ThermalLoad`
+    - Estimate `house_size_sqm` from `spatial_data.roof.total_usable_area_m2`
+    - Call `din_en_12831.calculate_design_heat_load()` with design outdoor temp from config
+    - Call `din_en_12831.estimate_dhw_requirement()` for cylinder sizing
+    - Call `din_en_12831.recommend_heat_pump_capacity()` for heat pump selection
+    - Evaluate `fits_in_utility_room` by comparing cylinder volume against `utility_room.available_volume_m3`
+    - Set `calculation_method = "DIN_EN_12831_simplified"` in metadata
+    - Use default U-values when `building_year` is not available
+    - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7_
+  - [ ]* 1.2 Write unit tests for the Thermodynamic Agent in `tests/test_thermodynamic_agent.py`
+    - Test that valid SpatialData + ConsumptionData produces a valid ThermalLoad
+    - Test heat load calculations against known DIN EN 12831 reference values
+    - Test DHW cylinder sizing and `fits_in_utility_room` evaluation
+    - Test that `calculation_method` metadata is set to `"DIN_EN_12831_simplified"`
+    - Test default U-values are used when building_year is unavailable
+    - Test round-trip serialization: ThermalLoad → JSON → ThermalLoad yields equivalent object
+    - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 9.2, 9.7_
+
+- [x] 2. Implement the Electrical Agent
+  - [x] 2.1 Create `src/agents/electrical/agent.py` with `run(electrical_data) -> ElectricalAssessment`
+    - Calculate `max_additional_load_A = main_supply.amperage_A - sum(breaker.rating_A)`
+    - Board upgrade required if `amperage_A < 63` OR `board_condition in ("poor", "requires_replacement")`
+    - Three-phase conversion required if `phases == 1` AND total planned load > 7.36 kW
+    - RCD addition required if no breaker with `type in ("RCD", "RCBO")` exists
+    - Inverter recommendation: `hybrid` for single-phase, `three_phase` for three-phase
+    - EV charger compatible if `has_ev == True` OR `spare_ways >= 2`
+    - Set `current_capacity_sufficient = (len(upgrades_required) == 0 and max_additional_load_A > 0)`
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9_
+  - [ ]* 2.2 Write unit tests for the Electrical Agent in `tests/test_electrical_agent.py`
+    - Test capacity calculation with known electrical configurations
+    - Test board upgrade triggered when amperage < 63A
+    - Test board upgrade triggered when board_condition is "poor" or "requires_replacement"
+    - Test three-phase conversion triggered for single-phase with load > 7.36 kW
+    - Test RCD addition when no RCD/RCBO breaker present
+    - Test inverter type recommendation for single-phase vs three-phase
+    - Test EV charger compatibility logic
+    - Test that `current_capacity_sufficient = False` implies at least one upgrade
+    - Test round-trip serialization: ElectricalAssessment → JSON → ElectricalAssessment
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 9.3, 9.8_
+
+- [x] 3. Implement the Behavioral Agent and TOU arbitrage
+  - [x] 3.1 Create `src/agents/behavioral/arbitrage.py` with TOU arbitrage calculation logic
+    - Implement `calculate_arbitrage_savings(shiftable_kwh, peak_rate, off_peak_rate)` returning annual savings
+    - Implement `determine_charge_discharge_windows(tou_tariff)` returning non-overlapping windows
+    - Validate that charge and discharge windows do not overlap
+    - _Requirements: 3.3, 3.5, 3.8_
+  - [x] 3.2 Create `src/agents/behavioral/agent.py` with `run(consumption_data) -> BehavioralProfile`
+    - Detect occupancy pattern from monthly consumption distribution (winter/summer ratio thresholds: >1.5 → home_all_day, <1.2 → away_daytime, else → mixed)
+    - Size battery: `capacity_kwh = daily_avg_kwh × self_consumption_factor × occupancy_multiplier`, clamped to [0.5, 50] kWh
+    - When TOU tariff present, call arbitrage module for charge/discharge windows and savings
+    - Set optimization_schedule frequency to "quarterly", next_review = today + 90 days
+    - Calculate annual savings from self-consumption, feed-in revenue, and arbitrage
+    - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8_
+  - [x] 3.3 Write unit tests for the Behavioral Agent in `tests/test_behavioral_agent.py`
+    - Test occupancy detection for home_all_day, away_daytime, and mixed patterns
+    - Test battery sizing for known consumption profiles
+    - Test TOU arbitrage savings calculation with known tariff differentials
+    - Test charge/discharge window non-overlap invariant
+    - Test optimization schedule frequency and next_review date
+    - Test annual savings estimation
+    - Test round-trip serialization: BehavioralProfile → JSON → BehavioralProfile
+    - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 9.4, 9.9_
+
+- [x] 4. Checkpoint — Verify all domain agents
+  - Ensure all tests pass for Thermodynamic, Electrical, and Behavioral agents, ask the user if questions arise.
+
+- [x] 5. Implement the Ingestion Agent with Gemini integration
+  - [x] 5.1 Create `src/agents/ingestion/media_handler.py` with file format validation
+    - Validate video formats: MP4, MOV, WEBM
+    - Validate photo formats: JPEG, JPG, PNG, HEIC
+    - Validate bill format: PDF
+    - Reject unsupported formats with descriptive error before calling Gemini
+    - _Requirements: 4.6_
+  - [x] 5.2 Create structured prompts in `src/agents/ingestion/prompts/`
+    - Create `video_prompt.py` with prompt for roofline video → SpatialData extraction
+    - Create `photo_prompt.py` with prompt for electrical panel photo → ElectricalData extraction
+    - Create `pdf_prompt.py` with prompt for utility bill PDF → ConsumptionData extraction
+    - Each prompt requests JSON output matching the target Pydantic schema
+    - _Requirements: 4.1, 4.2, 4.3_
+  - [x] 5.3 Create `src/agents/ingestion/agent.py` with async processing functions
+    - Implement `async process_video(file_path) -> SpatialData` calling Gemini API
+    - Implement `async process_photo(file_path) -> ElectricalData` calling Gemini API
+    - Implement `async process_pdf(file_path) -> ConsumptionData` calling Gemini API
+    - Set `confidence_score` from Gemini extraction confidence in metadata
+    - Set `gemini_model_version` from API response metadata
+    - Extract `bill_period_start` and `bill_period_end` from utility bill
+    - Retry up to 3 times with exponential backoff on API errors or timeouts
+    - Return structured error with `source_type` on failure
+    - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.7, 4.8, 11.1_
+  - [ ]* 5.4 Write unit tests for the Ingestion Agent in `tests/test_ingestion_agent.py`
+    - Test file format validation accepts valid formats and rejects invalid ones
+    - Test Gemini API call with mocked responses for each media type
+    - Test confidence_score and gemini_model_version are set in metadata
+    - Test retry logic with exponential backoff on API errors
+    - Test structured error response on Gemini failure/timeout
+    - Test round-trip serialization for SpatialData, ElectricalData, ConsumptionData
+    - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9, 4.10, 4.11, 11.1_
+
+- [x] 6. Implement the Synthesis Agent with Pioneer SLM
+  - [x] 6.1 Create `src/agents/synthesis/pioneer_client.py` with Pioneer SLM API client
+    - Implement async client for Pioneer SLM component selection and pricing
+    - Implement rule-based fallback using Reonic dataset pricing when Pioneer is unavailable
+    - Handle API errors and return structured error on failure
+    - _Requirements: 5.10_
+  - [x] 6.2 Create `src/agents/synthesis/agent.py` with `async run(module_layout, thermal_load, electrical_assessment, behavioral_profile) -> FinalProposal`
+    - Populate `system_design.pv` from ModuleLayout (total_kwp, total_panels) + ElectricalAssessment (inverter_recommendation)
+    - Populate `system_design.heat_pump` from ThermalLoad (capacity_kw, type, cop_estimate)
+    - Populate `system_design.battery` from BehavioralProfile (capacity_kwh)
+    - Calculate `total_cost_eur` by summing component costs + electrical upgrade costs
+    - Calculate `annual_savings_eur` from BehavioralProfile savings + heat pump operational savings
+    - Calculate `payback_years = total_cost_eur / annual_savings_eur`
+    - Always set `human_signoff.required = True`, `human_signoff.status = "pending"`
+    - Include all electrical upgrades in `compliance.electrical_upgrades`
+    - Generate unique `pipeline_run_id` in metadata
+    - Fall back to rule-based selection if Pioneer SLM is unavailable
+    - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 5.10, 5.11, 11.2_
+  - [ ]* 6.3 Write unit tests for the Synthesis Agent in `tests/test_synthesis_agent.py`
+    - Test FinalProposal is correctly assembled from all domain agent outputs
+    - Test financial calculations (total_cost, annual_savings, payback_years)
+    - Test human_signoff.required is always True and status is "pending"
+    - Test Pioneer SLM fallback to rule-based selection
+    - Test pipeline_run_id is generated and unique
+    - Test round-trip serialization: FinalProposal → JSON → FinalProposal
+    - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 5.10, 5.11, 9.10_
+
+- [x] 7. Checkpoint — Verify Ingestion and Synthesis agents
+  - Ensure all tests pass for Ingestion and Synthesis agents, ask the user if questions arise.
+
+- [x] 8. Implement the Orchestrator Agent and pipeline DAG
+  - [x] 8.1 Create `src/agents/orchestrator/dag.py` with pipeline DAG definition
+    - Define DAG stages: Ingestion → [Structural ‖ Electrical ‖ Thermodynamic ‖ Behavioral] → Synthesis
+    - Define data routing: SpatialData → Structural + Thermodynamic, ElectricalData → Electrical, ConsumptionData → Thermodynamic + Behavioral
+    - Define timeout constants: 120s per agent, 300s for full pipeline
+    - _Requirements: 6.1, 6.2_
+  - [x] 8.2 Create `src/agents/orchestrator/agent.py` with `async run_pipeline(video_path, photo_path, pdf_path) -> FinalProposal | PipelineError`
+    - Generate unique `pipeline_run_id` (UUID4) at start, include in all log messages
+    - Stage 1: Run Ingestion Agent → SpatialData, ElectricalData, ConsumptionData
+    - Safety Gate 1: Validate all three Ingestion outputs via Safety Agent `validate_handoff`
+    - Stage 2: Run four domain agents concurrently via `asyncio.gather` (Structural, Electrical, Thermodynamic, Behavioral)
+    - Safety Gate 2: Validate all four domain agent outputs
+    - Stage 3: Run Synthesis Agent → FinalProposal
+    - Safety Gate 3: Validate FinalProposal
+    - On Safety Agent rejection: halt pipeline, return ValidationResult errors
+    - On unhandled exception: catch, log with pipeline_run_id, return structured error
+    - On agent failure during parallel execution: cancel remaining agents
+    - Enforce timeouts: 120s per agent, 300s for full pipeline
+    - Log start time, end time, and duration of each agent at INFO level
+    - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 6.9, 7.1, 7.2, 7.3, 7.4, 11.3, 11.4, 11.5_
+  - [ ]* 8.3 Write unit tests for the Orchestrator Agent in `tests/test_orchestrator_agent.py`
+    - Test end-to-end pipeline execution with mock agent outputs
+    - Test Safety Agent validation is called at every handoff gate
+    - Test pipeline halts on Safety Agent rejection with correct error response
+    - Test parallel domain agent execution via asyncio.gather
+    - Test pipeline cancellation when one domain agent fails
+    - Test timeout enforcement per agent and for full pipeline
+    - Test pipeline_run_id is generated and included in logs
+    - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 6.9, 9.5_
+
+- [x] 9. Extend Safety Agent guardrails for new schemas
+  - [x] 9.1 Add guardrail checks for new agent outputs in `src/agents/safety/guardrails.py`
+    - Add confidence_score < 0.6 warning for Gemini outputs (Req 7.4)
+    - Verify ElectricalAssessment: current_capacity_sufficient=False requires non-empty upgrades_required (already exists, verify coverage)
+    - Verify ConsumptionData: monthly breakdown sum within 10% of annual_kwh (already exists, verify coverage)
+    - Verify ThermalLoad: DHW cylinder size in standard set (already exists, verify coverage)
+    - Verify ElectricalData: non-standard breaker ratings rejected (already exists, verify coverage)
+    - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8_
+  - [ ]* 9.2 Write tests verifying each guardrail rule rejects violating payloads in `tests/test_safety_guardrails_extended.py`
+    - Test each guardrail rule from the safety guardrails table
+    - Test that valid payloads from all new agents pass validation
+    - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8, 9.6_
+
+- [x] 10. Checkpoint — Verify Orchestrator and Safety Agent
+  - Ensure all tests pass for Orchestrator and extended Safety Agent guardrails, ask the user if questions arise.
+
+- [x] 11. Implement the FastAPI web layer
+  - [x] 11.1 Create `src/web/app.py` with FastAPI application and in-memory proposal store
+    - Initialize FastAPI app with CORS middleware
+    - Create in-memory `dict[str, FinalProposal]` proposal store keyed by `pipeline_run_id`
+    - _Requirements: 8.1_
+  - [x] 11.2 Implement `POST /api/v1/assess` endpoint in `src/web/routes/assess.py`
+    - Accept multipart file uploads for `video`, `photo`, `bill`
+    - Validate file types and sizes (max 100 MB each)
+    - Return HTTP 413 if any file exceeds 100 MB
+    - Save files to temp directory, trigger Orchestrator pipeline
+    - Return `pipeline_run_id` and status
+    - Return HTTP 422 with Safety Agent ValidationResult errors on pipeline failure
+    - _Requirements: 8.1, 8.2, 8.3, 8.7_
+  - [x] 11.3 Implement `GET /api/v1/proposals/{pipeline_run_id}` endpoint in `src/web/routes/proposals.py`
+    - Return FinalProposal JSON for completed pipeline run
+    - Return HTTP 404 if not found
+    - _Requirements: 8.4_
+  - [x] 11.4 Implement `POST /api/v1/proposals/{pipeline_run_id}/signoff` endpoint in `src/web/routes/proposals.py`
+    - Require authentication (return HTTP 401 if unauthenticated)
+    - Accept `{"action": "approve" | "reject", "notes": "..."}`
+    - Update `human_signoff.status`, `installer_id`, `signed_at`
+    - Rejection requires `notes` field
+    - _Requirements: 8.5, 8.6, 8.8_
+  - [ ]* 11.5 Write unit tests for the FastAPI web layer in `tests/test_web_layer.py`
+    - Test file upload with valid and invalid file types
+    - Test file size limit enforcement (HTTP 413)
+    - Test proposal retrieval (HTTP 200 and HTTP 404)
+    - Test signoff endpoint with approve and reject actions
+    - Test authentication enforcement (HTTP 401)
+    - Test pipeline failure returns HTTP 422 with validation errors
+    - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8_
+
+- [x] 12. Checkpoint — Verify FastAPI web layer
+  - Ensure all tests pass for the web layer endpoints, ask the user if questions arise.
+
+- [x] 13. Implement the Installer Dashboard (Next.js 14)
+  - [x] 13.1 Initialize Next.js 14 project in `src/web/frontend/` with TypeScript and Tailwind CSS
+    - Set up project structure with App Router
+    - Configure API client to call FastAPI backend endpoints
+    - _Requirements: 10.1_
+  - [x] 13.2 Implement proposal list page displaying pending proposals
+    - Fetch and display proposals with status "pending" for the authenticated installer
+    - Show proposal summary (pipeline_run_id, system overview, generated_at)
+    - _Requirements: 10.1, 10.6_
+  - [x] 13.3 Implement proposal detail page with full FinalProposal display
+    - Display system_design (PV, battery, heat pump details)
+    - Display financial_summary (total cost, annual savings, payback years)
+    - Display compliance details (electrical upgrades, regulatory notes)
+    - _Requirements: 10.2_
+  - [x] 13.4 Implement Approve and Reject actions with signoff API integration
+    - Add "Approve" button calling `POST /api/v1/proposals/{id}/signoff` with action "approve"
+    - Add "Reject" button requiring a notes field and calling signoff with action "reject"
+    - Update UI to reflect status change after signoff
+    - Prevent proposal delivery to customer while status is "pending"
+    - _Requirements: 10.3, 10.4, 10.5, 10.6_
+
+- [x] 14. Final checkpoint — Full pipeline verification
+  - Ensure all tests pass across all agents, web layer, and integration tests, ask the user if questions arise.
+
+## Notes
+
+- Tasks marked with `*` are optional and can be skipped for faster MVP
+- Each task references specific requirements for traceability
+- Checkpoints ensure incremental validation after each major component
+- The design uses Python for all backend agents and FastAPI for the web layer; Next.js 14 with TypeScript for the frontend
+- All domain agents (Thermodynamic, Electrical, Behavioral) are deterministic — no LLM calls
+- Only the Ingestion Agent (Gemini) and Synthesis Agent (Pioneer SLM) use external AI APIs
+- The existing Safety Agent, Structural Agent, schemas, and config are already implemented and should not be recreated
+- Proposals are stored in-memory (`dict[str, FinalProposal]`) for the initial implementation
