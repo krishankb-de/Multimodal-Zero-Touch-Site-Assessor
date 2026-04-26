@@ -10,9 +10,10 @@ A homeowner uploads three files through a web interface:
 
 | Input | What it tells the system |
 |---|---|
-| Roofline video (MP4/MOV) | Roof geometry: face count, tilt, azimuth, usable area, obstacles |
+| Roofline video (MP4/MOV) | Roof geometry: face count, tilt, azimuth, usable area, obstacles; building envelope dimensions |
 | Electrical panel photo (JPG/PNG) | Panel amperage, phases, breaker inventory, spare ways |
 | Utility bill PDF | Annual/monthly consumption, tariff rate, heating fuel, EV presence |
+| `location` field (optional) | Address or city name → location-specific historical weather data |
 
 The system runs an 8-agent AI pipeline and produces:
 
@@ -22,6 +23,9 @@ The system runs an 8-agent AI pipeline and produces:
 - 3D roof mesh (when reconstruction succeeds)
 - Financial summary (cost, annual savings, payback period)
 - Single-line electrical diagram (SLD)
+- **Location-specific weather analysis** (when `location` is provided)
+- **Building envelope dimensions** (ridge/eave height, footprint, wall area, volume)
+- **Visual installation plan** (panel grid on building outline, when dimensions available)
 - Human installer sign-off workflow
 
 No proposal reaches the customer without an installer approving it.
@@ -212,7 +216,7 @@ cd ../../..
 python -m pytest tests/ --ignore=tests/test_integration_live.py -q
 ```
 
-Expected: **256 passed**.
+Expected: **273 passed**.
 
 ---
 
@@ -276,19 +280,39 @@ Sample media files are in `Datasets/Sample_house_video/` and `Datasets/Videos/`.
 ### Example: submit an assessment via curl
 
 ```bash
+# Without location (backward-compatible — uses static regional climate data)
 curl -X POST http://localhost:8000/api/v1/assess \
   -F "video=@path/to/roof.mp4" \
   -F "photo=@path/to/panel.jpg" \
   -F "bill=@path/to/bill.pdf"
+
+# With location (uses historical weather data from Open-Meteo)
+curl -X POST http://localhost:8000/api/v1/assess \
+  -F "video=@path/to/roof.mp4" \
+  -F "photo=@path/to/panel.jpg" \
+  -F "bill=@path/to/bill.pdf" \
+  -F "location=Berlin, Germany"
 ```
 
-Response:
+Response (without location):
 ```json
 {
   "pipeline_run_id": "abc123",
   "status": "completed",
   "mesh_uri": "/api/v1/artifacts/abc123/mesh.glb",
-  "point_cloud_uri": null
+  "point_cloud_uri": null,
+  "weather_profile_available": false
+}
+```
+
+Response (with location):
+```json
+{
+  "pipeline_run_id": "def456",
+  "status": "completed",
+  "mesh_uri": "/api/v1/artifacts/def456/mesh.glb",
+  "point_cloud_uri": null,
+  "weather_profile_available": true
 }
 ```
 
@@ -303,38 +327,50 @@ clean-repo/
 │   │   ├── ingestion/          # Video/photo/PDF → structured data
 │   │   │   ├── agent.py        # Main entry point (process_video/photo/pdf)
 │   │   │   ├── frame_extractor.py   # Keyframe sampling from video
+│   │   │   ├── dimension_estimator.py  # ★ Building envelope dimensions from video
 │   │   │   ├── reconstruction.py    # 4-tier 3D mesh reconstruction
 │   │   │   ├── roof_segmenter.py    # RANSAC plane fitting on mesh
 │   │   │   ├── media_handler.py     # File format validation
 │   │   │   └── prompts/        # Gemini prompts (video/photo/pdf)
+│   │   │       └── dimension_prompt.py  # ★ Dedicated dimension estimation prompt
 │   │   ├── structural/         # Solar panel layout engine
-│   │   │   ├── agent.py        # Orchestrates layout + shading
+│   │   │   ├── agent.py        # Orchestrates layout + shading (★ uses WeatherProfile lat)
 │   │   │   ├── layout_engine.py     # 2D bin-pack + 3D polygon clipping
 │   │   │   └── shading.py      # Sun-path shading simulation
 │   │   ├── thermodynamic/      # Heat load calculation (DIN EN 12831)
+│   │   │   ├── agent.py        # ★ Uses WeatherProfile temp + HouseDimensions
+│   │   │   └── din_en_12831.py # ★ Dimension-aware transmission/ventilation loss
 │   │   ├── electrical/         # Panel assessment + upgrade recommendations
 │   │   ├── behavioral/         # Occupancy + battery sizing + TOU arbitrage
 │   │   ├── synthesis/          # Final proposal assembly
-│   │   │   ├── agent.py        # Combines all domain outputs
+│   │   │   ├── agent.py        # ★ Uses WeatherProfile irradiance + generates InstallationPlan
 │   │   │   ├── pioneer_client.py    # Pioneer SLM pricing API
 │   │   │   └── reonic_dataset.py   # Historical project matching
 │   │   ├── safety/             # Validation agent (intercepts every handoff)
-│   │   │   ├── validator.py    # JSON schema validation
-│   │   │   └── guardrails.py   # Domain-specific safety rules
+│   │   │   ├── validator.py    # JSON schema validation (★ WeatherProfile registered)
+│   │   │   └── guardrails.py   # Domain-specific safety rules (★ WeatherProfile checks)
 │   │   ├── orchestrator/       # Pipeline execution and DAG
+│   │   │   └── agent.py        # ★ Runs weather fetch concurrently with ingestion
 │   │   └── hems/               # Post-install telemetry reoptimisation
 │   ├── common/
-│   │   ├── schemas.py          # All Pydantic inter-agent schemas
+│   │   ├── schemas.py          # All Pydantic inter-agent schemas (★ WeatherProfile, HouseDimensions, InstallationPlan)
 │   │   ├── config.py           # Environment-based configuration
 │   │   ├── artifact_store.py   # Per-run artifact directory management
 │   │   ├── vision_provider.py  # Pioneer/Gemini provider abstraction
-│   │   ├── climate.py          # Regional irradiance + temperature data
+│   │   ├── climate.py          # Regional irradiance + temperature data (static fallback)
 │   │   ├── glb_validator.py    # GLB cross-check against regional models
 │   │   └── sld_generator.py    # Single-line diagram generator
+│   ├── services/               # ★ New: external service integrations
+│   │   └── weather/
+│   │       ├── service.py      # ★ Main orchestrator (geocode → fetch → analyze → cache)
+│   │       ├── geocoding.py    # ★ Open-Meteo Geocoding API client
+│   │       ├── historical.py   # ★ Open-Meteo Archive API client (5yr daily data)
+│   │       ├── analysis.py     # ★ Aggregation engine (monthly means, rankings, schedule)
+│   │       └── cache.py        # ★ In-memory coordinate-keyed cache
 │   └── web/
 │       ├── app.py              # FastAPI application
 │       ├── routes/
-│       │   ├── assess.py       # POST /assess
+│       │   ├── assess.py       # POST /assess (★ accepts optional location field)
 │       │   ├── proposals.py    # GET/POST proposals
 │       │   ├── artifacts.py    # GET artifacts (mesh.glb etc.)
 │       │   └── installations.py
@@ -345,7 +381,12 @@ clean-repo/
 │               ├── proposals/[id]/page.tsx  # Proposal detail + sign-off
 │               └── components/
 │                   └── RoofMeshViewer.tsx   # Interactive 3D GLB viewer
-├── tests/                      # 256 unit + integration tests
+├── tests/                      # 273 unit + integration + property-based tests
+│   ├── test_weather_pbt.py             # ★ Property-based tests (Properties 1–8)
+│   ├── test_weather_service.py         # ★ Weather service unit tests
+│   ├── test_thermodynamic_dimensions.py # ★ Property-based tests (Property 9)
+│   ├── test_backward_compatibility.py  # ★ API backward compatibility tests
+│   └── test_weather_integration.py     # ★ Full pipeline integration tests
 ├── Datasets/
 │   ├── Exp 3D-Modells/         # Regional reference GLBs (Brandenburg, Hamburg, etc.)
 │   ├── Project Data/           # Reonic historical project CSVs
@@ -357,6 +398,8 @@ clean-repo/
 ├── Makefile
 └── .env                        # Your API keys (never commit this)
 ```
+
+★ = modified or added by the Weather Intelligence & House Dimensions feature
 
 ---
 
@@ -391,6 +434,11 @@ The Safety Agent enforces these rules on **every** agent handoff. Violations hal
 | Gemini confidence | ≥ 0.6 | FLAG for manual review |
 | Human sign-off | always required = true | Cannot be overridden |
 | Mesh + 3D polygons | ≥ 80% of faces need vertices when mesh present | REJECT |
+| WeatherProfile latitude | 47.0–55.5°N (Germany bbox) | REJECT profile, fall back to static |
+| WeatherProfile longitude | 5.5–15.5°E (Germany bbox) | REJECT profile, fall back to static |
+| WeatherProfile irradiance | 700–1400 kWh/m²/yr | REJECT profile, fall back to static |
+| WeatherProfile monthly arrays | exactly 12 elements each | REJECT profile, fall back to static |
+| WeatherProfile quarter rankings | permutation of [1,2,3,4] | REJECT profile, fall back to static |
 
 ---
 
@@ -437,6 +485,13 @@ python -m pytest tests/test_safety_agent.py -v
 python -m pytest tests/test_video_3d_pipeline.py -v
 python -m pytest tests/test_frame_extractor.py -v
 
+# Weather Intelligence feature tests
+python -m pytest tests/test_weather_pbt.py -v           # Property-based tests
+python -m pytest tests/test_weather_service.py -v       # Service unit tests
+python -m pytest tests/test_thermodynamic_dimensions.py -v  # Heat load PBT
+python -m pytest tests/test_backward_compatibility.py -v    # API compatibility
+python -m pytest tests/test_weather_integration.py -v       # Pipeline integration
+
 # Live integration tests (requires GEMINI_API_KEY)
 GEMINI_API_KEY=your_key python -m pytest tests/test_integration_live.py -v
 
@@ -455,6 +510,178 @@ make test-live-video VIDEO_PATH=Datasets/Sample_house_video/roof.mp4
 
 ---
 
+## Weather Intelligence & House Dimensions
+
+This feature replaces the static 4-region climate table with location-specific historical weather data and adds building envelope dimension estimation from the roofline video. Both capabilities are **optional and fully backward-compatible** — the pipeline falls back to existing behavior when no location is provided or when estimation fails.
+
+### How it works
+
+```
+POST /api/v1/assess
+  ├── video + photo + bill  (existing)
+  └── location: "Berlin, Germany"  (new, optional)
+          │
+          ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │  Stage 1 — runs concurrently                            │
+  │                                                         │
+  │  Ingestion Agent          Weather Intelligence Service  │
+  │  ─────────────────        ────────────────────────────  │
+  │  process_video()    ◄──►  1. Geocode location           │
+  │    └─ Gemini vision       2. Check in-memory cache      │
+  │    └─ Dimension           3. Fetch 5yr historical data  │
+  │       Estimator ──►       4. Aggregate → WeatherProfile │
+  │       HouseDimensions     5. Cache result               │
+  │  process_photo()                                        │
+  │  process_pdf()                                          │
+  └─────────────────────────────────────────────────────────┘
+          │
+          ▼
+  Safety Gate 1 — validates WeatherProfile (if present)
+  • lat/lon within Germany bbox (47–55.5°N, 5.5–15.5°E)
+  • all 12 monthly arrays present
+  • irradiance in plausible range (700–1400 kWh/m²/yr)
+  • quarter_rankings is a permutation of [1,2,3,4]
+  • invalid profile → soft failure, falls back to static data
+          │
+          ▼
+  Stage 2 — Domain agents receive WeatherProfile + HouseDimensions
+  ┌──────────────────────────────────────────────────────────┐
+  │  Structural Agent                                        │
+  │  • uses weather_profile.latitude for sun-path shading    │
+  │  • uses eave/ridge height for tilt validation            │
+  │                                                          │
+  │  Thermodynamic Agent                                     │
+  │  • uses min(monthly_avg_temperature_c) as design temp    │
+  │  • uses estimated_wall_area_m2 for transmission loss     │
+  │  • uses estimated_volume_m3 for ventilation loss         │
+  │    (replaces roof-area proxy when dimensions available)  │
+  └──────────────────────────────────────────────────────────┘
+          │
+          ▼
+  Stage 3 — Synthesis Agent
+  • uses annual_irradiance_kwh_m2 instead of static table
+  • applies cloud cover correction factor to PV yield
+  • generates InstallationPlan (panel grid on building outline)
+    when HouseDimensions are available
+  • records data source in compliance notes
+          │
+          ▼
+  AssessResponse
+  {
+    "pipeline_run_id": "...",
+    "status": "completed",
+    "weather_profile_available": true   ← new field
+  }
+```
+
+### Submitting a location
+
+Add the optional `location` field to the multipart form:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/assess \
+  -F "video=@roof.mp4" \
+  -F "photo=@panel.jpg" \
+  -F "bill=@bill.pdf" \
+  -F "location=Berlin, Germany"
+```
+
+Any human-readable address, city name, or postal code works. The system geocodes it via the [Open-Meteo Geocoding API](https://open-meteo.com/en/docs/geocoding-api) and validates the result is within Germany.
+
+Without the `location` field the pipeline behaves identically to before — static regional climate data is used and `weather_profile_available` is `false`.
+
+### What the WeatherProfile contains
+
+After geocoding, the service fetches 5 years of daily data from the [Open-Meteo Historical Weather Archive](https://open-meteo.com/en/docs/historical-weather-api) (no API key required) and aggregates it into:
+
+| Field | Description |
+|---|---|
+| `monthly_sunshine_hours` | Average daily sunshine hours for each of the 12 months |
+| `monthly_precipitation_mm` | Average monthly precipitation (mm) |
+| `monthly_cloud_cover_pct` | Average monthly cloud cover (%) |
+| `monthly_wind_speed_ms` | Average monthly wind speed (m/s) |
+| `monthly_avg_temperature_c` | Average monthly ambient temperature (°C) |
+| `annual_irradiance_kwh_m2` | Annual PV irradiance derived from shortwave radiation sum |
+| `sunny_days_per_year` | Days with sunshine > 6 hours |
+| `seasonal_sunshine_hours` | Quarterly averages [Q1, Q2, Q3, Q4] |
+| `optimal_installation_quarter` | Best quarter for installation (lowest precip + wind, highest sun) |
+| `quarter_rankings` | All 4 quarters ranked best → worst |
+| `cleaning_schedule` | Recommended cleaning frequency and months |
+
+### How PV yield improves
+
+Without location:
+```
+annual_yield = total_kwp × static_irradiance(region) × 0.80 × shading_factor
+```
+
+With location:
+```
+annual_yield = total_kwp × location_irradiance × 0.80 × cloud_correction × shading_factor
+
+cloud_correction = 1.0 − (avg_cloud_cover_pct / 100) × 0.5
+# e.g. 50% cloud cover → correction factor 0.75
+```
+
+The data source (location-specific or static regional) is recorded in `compliance.regulatory_notes` of every proposal.
+
+### House Dimension Estimation
+
+When a roofline video is processed, the Dimension Estimator sends keyframes to Gemini with a dedicated prompt that instructs the model to use visual scale references (standard door height ≈ 2.1 m, window proportions, garage doors) to estimate:
+
+| Dimension | Description |
+|---|---|
+| `ridge_height_m` | Highest point of roof above ground |
+| `eave_height_m` | Lowest roof edge above ground |
+| `footprint_width_m` | Building width |
+| `footprint_depth_m` | Building depth |
+| `estimated_wall_area_m2` | Total external wall area (derived) |
+| `estimated_volume_m3` | Heated building volume (derived) |
+| `confidence` | Per-dimension confidence score (0.0–1.0) |
+
+If Gemini cannot determine dimensions from the frames, `house_dimensions` is `null` and the pipeline continues with the existing roof-area proxy for heat load calculations.
+
+When dimensions are available, the Synthesis Agent generates an `InstallationPlan` — a structured JSON object showing panel positions as a coordinate grid relative to the building footprint, included in the `FinalProposal`.
+
+### Fallback behavior
+
+| Scenario | Behavior |
+|---|---|
+| No `location` field | Static regional climate data, `weather_profile_available: false` |
+| Geocoding fails (unknown place) | HTTP 422 returned to caller |
+| Location outside Germany | HTTP 422 returned to caller |
+| Open-Meteo API unreachable | Soft failure, falls back to static data |
+| WeatherProfile fails Safety Gate 1 | Soft failure, falls back to static data |
+| Dimension estimation fails | `house_dimensions: null`, roof-area proxy used |
+
+### New files added
+
+```
+src/
+├── services/
+│   └── weather/
+│       ├── service.py          # Main orchestrator (geocode → fetch → analyze → cache)
+│       ├── geocoding.py        # Open-Meteo Geocoding API client
+│       ├── historical.py       # Open-Meteo Archive API client (5yr daily data)
+│       ├── analysis.py         # Aggregation engine (monthly means, rankings, schedule)
+│       └── cache.py            # In-memory coordinate-keyed cache (2 d.p. precision)
+└── agents/
+    └── ingestion/
+        ├── dimension_estimator.py      # Gemini-based building dimension extraction
+        └── prompts/
+            └── dimension_prompt.py     # Dedicated Gemini prompt for dimension estimation
+
+tests/
+├── test_weather_pbt.py             # Property-based tests (Properties 1–8)
+├── test_weather_service.py         # Unit tests for service fallback behavior
+├── test_thermodynamic_dimensions.py # Property-based tests (Property 9)
+├── test_backward_compatibility.py  # API backward compatibility + schema validation
+└── test_weather_integration.py     # Full pipeline integration tests
+```
+
+---
+
 ## Regions Supported
 
 Climate data (irradiance, design temperatures) and reference 3D models are available for four German regions:
@@ -466,7 +693,7 @@ Climate data (irradiance, design temperatures) and reference 3D models are avail
 | North Germany | −10 °C | 940 kWh/m²/yr |
 | Ruhr | −10 °C | 970 kWh/m²/yr |
 
-Set your region with `REGION=Hamburg` in `.env`.
+Set your region with `REGION=Hamburg` in `.env`. When a `location` is provided at request time, location-specific weather data takes precedence over the static regional table.
 
 ---
 
