@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from src.agents.orchestrator.agent import PipelineError, PipelineSuccess, run_pipeline
 from src.common.artifact_store import mesh_path, point_cloud_path, run_dir
-from src.web.store import proposal_store
+from src.web.store import proposal_store, weather_store
 
 router = APIRouter()
 
@@ -108,8 +108,10 @@ async def assess(
                 },
             )
 
-    # Store the proposal
+    # Store the proposal and weather profile (if available)
     proposal_store[result.proposal.metadata.pipeline_run_id] = result.proposal
+    if result.weather_profile is not None:
+        weather_store[result.proposal.metadata.pipeline_run_id] = result.weather_profile
 
     # Resolve 3D artifact URIs if available from the pipeline result
     run_id = result.proposal.metadata.pipeline_run_id

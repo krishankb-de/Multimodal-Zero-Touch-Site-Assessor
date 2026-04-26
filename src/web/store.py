@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import delete, select
 
-from src.common.schemas import FinalProposal
+from src.common.schemas import FinalProposal, WeatherProfile
 from src.web.database import ProposalRow, get_session
 
 logger = logging.getLogger(__name__)
@@ -66,3 +66,7 @@ class ProposalStore:
 
 
 proposal_store = ProposalStore()
+
+# Simple in-memory store for weather profiles keyed by pipeline_run_id.
+# Not persisted — acceptable since weather data is re-fetchable if needed.
+weather_store: dict[str, WeatherProfile] = {}
