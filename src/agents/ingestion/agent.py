@@ -41,6 +41,7 @@ from src.agents.ingestion.frame_extractor import extract_keyframes
 from src.agents.ingestion.prompts.pdf_prompt import PDF_EXTRACTION_PROMPT
 from src.agents.ingestion.prompts.photo_prompt import PHOTO_EXTRACTION_PROMPT
 from src.agents.ingestion.prompts.video_prompt import MULTI_FRAME_VIDEO_PROMPT, VIDEO_EXTRACTION_PROMPT
+from src.agents.ingestion.dimension_estimator import estimate_dimensions
 from src.common.vision_provider import VisionProviderError, analyze_frames_with_fallback
 
 logger = logging.getLogger(__name__)
@@ -164,7 +165,20 @@ async def process_video(file_path: Path, run_id: str | None = None) -> SpatialDa
                 timestamp=_now_utc(),
                 gemini_model_version=config.gemini.model_name,
             )
-            return SpatialData(**data, metadata=metadata)
+
+            # Estimate house dimensions from keyframes (optional — None on failure)
+            house_dimensions = None
+            if frames:
+                try:
+                    house_dimensions = await estimate_dimensions(frames)
+                except Exception as dim_exc:
+                    logger.warning(
+                        "process_video: dimension estimation failed: %s — continuing without dimensions",
+                        dim_exc,
+                    )
+
+            spatial_data = SpatialData(**data, metadata=metadata, house_dimensions=house_dimensions)
+            return spatial_data
         except UnsupportedFormatError:
             raise
         except (VisionProviderError, Exception) as exc:

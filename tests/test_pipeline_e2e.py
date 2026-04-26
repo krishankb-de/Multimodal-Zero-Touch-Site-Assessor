@@ -256,6 +256,6 @@ class TestPipelineE2E:
         result = self._run(run_pipeline(video, photo, pdf))
         assert not isinstance(result, PipelineError)
         from src.common.schemas import FinalProposal
-        dumped = result.model_dump(mode="json")
+        dumped = result.proposal.model_dump(mode="json")
         reloaded = FinalProposal.model_validate(dumped)
         assert reloaded.human_signoff.required is True

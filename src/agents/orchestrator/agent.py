@@ -3,7 +3,8 @@ Orchestrator Agent — runs the full Zero-Touch Agent Pipeline.
 
 Execution order:
   Stage 1 (Ingestion):        process_video + process_photo + process_pdf  [concurrent]
-  Safety Gate 1:              validate SpatialData, ElectricalData, ConsumptionData
+                              + WeatherIntelligenceService.get_weather_profile()  [concurrent with ingestion]
+  Safety Gate 1:              validate SpatialData, ElectricalData, ConsumptionData, WeatherProfile (if present)
   Stage 2 (Domain parallel):  structural + electrical + thermodynamic + behavioral  [concurrent]
   Safety Gate 2:              validate ModuleLayout, ElectricalAssessment, ThermalLoad, BehavioralProfile
   Stage 3 (Synthesis):        synthesis_agent.run(...)
@@ -21,6 +22,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from src.agents.orchestrator.dag import AGENT_TIMEOUT_SECONDS, PIPELINE_TIMEOUT_SECONDS, PipelineStage
 from src.agents.ingestion import agent as ingestion_agent
@@ -30,7 +32,8 @@ from src.agents.thermodynamic import agent as thermodynamic_agent
 from src.agents.behavioral import agent as behavioral_agent
 from src.agents.synthesis import agent as synthesis_agent
 from src.agents.safety.validator import validate_handoff
-from src.common.schemas import FinalProposal, ValidationResult
+from src.common.schemas import FinalProposal, ValidationResult, WeatherProfile
+from src.services.weather.service import WeatherIntelligenceService
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +50,24 @@ class PipelineError:
     validation_errors: list | None = None  # ValidationResult errors if validation_failure
 
 
+@dataclass
+class PipelineSuccess:
+    """Successful pipeline result wrapping the FinalProposal and metadata."""
+
+    proposal: FinalProposal
+    weather_profile_available: bool = False
+
+    # Proxy attribute access to the underlying proposal for backward compatibility
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.proposal, name)
+
+
 async def run_pipeline(
     video_path: Path,
     photo_path: Path,
     pdf_path: Path,
-) -> FinalProposal | PipelineError:
+    location: Optional[str] = None,
+) -> PipelineSuccess | PipelineError:
     """
     Execute the full Zero-Touch Agent Pipeline.
 
@@ -59,19 +75,20 @@ async def run_pipeline(
         video_path: Path to the roofline video file.
         photo_path: Path to the electrical panel photo file.
         pdf_path:   Path to the utility bill PDF file.
+        location:   Optional address or place name for location-specific weather data (Req 1.1).
 
     Returns:
-        FinalProposal on success, or PipelineError on any failure.
+        PipelineSuccess on success, or PipelineError on any failure.
     """
     pipeline_run_id = str(uuid.uuid4())
     pipeline_start = datetime.now(timezone.utc)
 
-    logger.info("[%s] Pipeline starting — video=%s photo=%s pdf=%s",
-                pipeline_run_id, video_path, photo_path, pdf_path)
+    logger.info("[%s] Pipeline starting — video=%s photo=%s pdf=%s location=%s",
+                pipeline_run_id, video_path, photo_path, pdf_path, location)
 
     try:
         result = await asyncio.wait_for(
-            _execute_pipeline(pipeline_run_id, video_path, photo_path, pdf_path),
+            _execute_pipeline(pipeline_run_id, video_path, photo_path, pdf_path, location),
             timeout=PIPELINE_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:
@@ -102,12 +119,50 @@ async def run_pipeline(
     return result
 
 
+async def _fetch_weather_profile(
+    location: str,
+    pipeline_run_id: str,
+) -> WeatherProfile | None:
+    """
+    Fetch a WeatherProfile for the given location string.
+
+    Returns None on any error so the pipeline can continue with static climate data (Req 2.4).
+    """
+    try:
+        service = WeatherIntelligenceService()
+        profile = await service.get_weather_profile(location)
+        if profile is not None:
+            logger.info(
+                "[%s] Weather profile fetched — lat=%.4f lon=%.4f irradiance=%.0f kWh/m2/year",
+                pipeline_run_id,
+                profile.latitude,
+                profile.longitude,
+                profile.annual_irradiance_kwh_m2,
+            )
+        else:
+            logger.warning(
+                "[%s] Weather service returned None for location=%r — using static climate data",
+                pipeline_run_id,
+                location,
+            )
+        return profile
+    except Exception as exc:
+        logger.warning(
+            "[%s] Weather service failed for location=%r: %s — using static climate data",
+            pipeline_run_id,
+            location,
+            exc,
+        )
+        return None
+
+
 async def _execute_pipeline(
     pipeline_run_id: str,
     video_path: Path,
     photo_path: Path,
     pdf_path: Path,
-) -> FinalProposal | PipelineError:
+    location: Optional[str] = None,
+) -> PipelineSuccess | PipelineError:
     """Inner pipeline logic (wrapped by the outer timeout in run_pipeline)."""
 
     # ------------------------------------------------------------------
@@ -118,14 +173,14 @@ async def _execute_pipeline(
         (photo_path, "photo_path"),
         (pdf_path, "pdf_path"),
     ]
-    for path, field in file_checks:
+    for path, field_name in file_checks:
         if not path.exists():
             return PipelineError(
                 pipeline_run_id=pipeline_run_id,
                 stage=PipelineStage.INGESTION.value,
                 agent_name="orchestrator",
                 error_type="validation_failure",
-                message=f"File not found: {field}={path}",
+                message=f"File not found: {field_name}={path}",
             )
         if path.stat().st_size == 0:
             return PipelineError(
@@ -133,47 +188,72 @@ async def _execute_pipeline(
                 stage=PipelineStage.INGESTION.value,
                 agent_name="orchestrator",
                 error_type="validation_failure",
-                message=f"File is empty: {field}={path}",
+                message=f"File is empty: {field_name}={path}",
             )
 
     # ------------------------------------------------------------------
-    # Stage 1 — Ingestion (three concurrent calls)
+    # Stage 1 — Ingestion (three concurrent calls) + optional weather fetch
+    # Weather service runs concurrently with ingestion (Req 8.3)
     # ------------------------------------------------------------------
-    logger.info("[%s] Stage 1 — Ingestion starting", pipeline_run_id)
+    logger.info("[%s] Stage 1 — Ingestion starting (location=%s)", pipeline_run_id, location)
     stage1_start = datetime.now(timezone.utc)
 
-    try:
-        spatial_data, electrical_data, consumption_data = await asyncio.gather(
-            asyncio.wait_for(ingestion_agent.process_video(video_path), AGENT_TIMEOUT_SECONDS),
-            asyncio.wait_for(ingestion_agent.process_photo(photo_path), AGENT_TIMEOUT_SECONDS),
-            asyncio.wait_for(ingestion_agent.process_pdf(pdf_path), AGENT_TIMEOUT_SECONDS),
+    ingestion_coros = [
+        asyncio.wait_for(ingestion_agent.process_video(video_path), AGENT_TIMEOUT_SECONDS),
+        asyncio.wait_for(ingestion_agent.process_photo(photo_path), AGENT_TIMEOUT_SECONDS),
+        asyncio.wait_for(ingestion_agent.process_pdf(pdf_path), AGENT_TIMEOUT_SECONDS),
+    ]
+
+    if location:
+        # Run weather fetch concurrently with ingestion; never blocks the pipeline on failure
+        weather_coro = asyncio.wait_for(
+            _fetch_weather_profile(location, pipeline_run_id),
+            AGENT_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError as exc:
-        duration = (datetime.now(timezone.utc) - stage1_start).total_seconds()
-        logger.error("[%s] Ingestion timed out after %.1fs", pipeline_run_id, duration)
-        return PipelineError(
-            pipeline_run_id=pipeline_run_id,
-            stage=PipelineStage.INGESTION.value,
-            agent_name="ingestion",
-            error_type="timeout",
-            message=f"Ingestion agent timed out after {AGENT_TIMEOUT_SECONDS}s",
-        )
-    except Exception as exc:
-        duration = (datetime.now(timezone.utc) - stage1_start).total_seconds()
-        logger.exception("[%s] Ingestion failed after %.1fs: %s", pipeline_run_id, duration, exc)
-        return PipelineError(
-            pipeline_run_id=pipeline_run_id,
-            stage=PipelineStage.INGESTION.value,
-            agent_name="ingestion",
-            error_type="agent_exception",
-            message=str(exc),
+        all_results = await asyncio.gather(*ingestion_coros, weather_coro, return_exceptions=True)
+        ingestion_results = all_results[:3]
+        weather_result = all_results[3]
+    else:
+        ingestion_results = await asyncio.gather(*ingestion_coros, return_exceptions=True)
+        weather_result = None
+
+    # Check ingestion exceptions
+    for res in ingestion_results:
+        if isinstance(res, BaseException):
+            duration = (datetime.now(timezone.utc) - stage1_start).total_seconds()
+            error_type = "timeout" if isinstance(res, asyncio.TimeoutError) else "agent_exception"
+            logger.error("[%s] Ingestion failed after %.1fs: %s", pipeline_run_id, duration, res)
+            return PipelineError(
+                pipeline_run_id=pipeline_run_id,
+                stage=PipelineStage.INGESTION.value,
+                agent_name="ingestion",
+                error_type=error_type,
+                message=str(res),
+            )
+
+    spatial_data, electrical_data, consumption_data = ingestion_results
+
+    # Weather result: treat any exception as a soft failure (fall back to static data)
+    weather_profile: WeatherProfile | None = None
+    if isinstance(weather_result, WeatherProfile):
+        weather_profile = weather_result
+    elif isinstance(weather_result, BaseException):
+        logger.warning(
+            "[%s] Weather fetch raised exception: %s — continuing without weather data",
+            pipeline_run_id,
+            weather_result,
         )
 
     stage1_duration = (datetime.now(timezone.utc) - stage1_start).total_seconds()
-    logger.info("[%s] Stage 1 — Ingestion complete in %.1fs", pipeline_run_id, stage1_duration)
+    logger.info(
+        "[%s] Stage 1 — Ingestion complete in %.1fs (weather_profile=%s)",
+        pipeline_run_id,
+        stage1_duration,
+        "available" if weather_profile is not None else "unavailable",
+    )
 
     # ------------------------------------------------------------------
-    # Safety Gate 1 — validate ingestion outputs
+    # Safety Gate 1 — validate ingestion outputs + WeatherProfile if present
     # ------------------------------------------------------------------
     logger.info("[%s] Safety Gate 1 — validating ingestion outputs", pipeline_run_id)
 
@@ -195,17 +275,36 @@ async def _execute_pipeline(
                 validation_errors=result.errors,
             )
 
+    # Validate WeatherProfile at Safety Gate 1 when present (Req 9.3)
+    if weather_profile is not None:
+        _, wp_result = validate_handoff(
+            weather_profile.model_dump(mode="json"), "WeatherProfile", "weather_service"
+        )
+        if not wp_result.valid:
+            logger.warning(
+                "[%s] Safety Gate 1 rejected WeatherProfile: %d errors — falling back to static data",
+                pipeline_run_id,
+                len(wp_result.errors),
+            )
+            # Soft failure: discard invalid profile, continue with static climate data
+            weather_profile = None
+        else:
+            logger.info("[%s] Safety Gate 1 — WeatherProfile valid", pipeline_run_id)
+
     logger.info("[%s] Safety Gate 1 — all ingestion outputs valid", pipeline_run_id)
 
     # ------------------------------------------------------------------
     # Stage 2 — Domain agents (four concurrent calls)
+    # Pass WeatherProfile and HouseDimensions to consuming agents (Req 8.3)
     # ------------------------------------------------------------------
     logger.info("[%s] Stage 2 — Domain agents starting", pipeline_run_id)
     stage2_start = datetime.now(timezone.utc)
 
     domain_tasks = [
         asyncio.wait_for(
-            asyncio.get_event_loop().run_in_executor(None, structural_agent.run, spatial_data),
+            asyncio.get_event_loop().run_in_executor(
+                None, structural_agent.run, spatial_data, weather_profile
+            ),
             AGENT_TIMEOUT_SECONDS,
         ),
         asyncio.wait_for(
@@ -214,7 +313,7 @@ async def _execute_pipeline(
         ),
         asyncio.wait_for(
             asyncio.get_event_loop().run_in_executor(
-                None, thermodynamic_agent.run, spatial_data, consumption_data
+                None, thermodynamic_agent.run, spatial_data, consumption_data, weather_profile
             ),
             AGENT_TIMEOUT_SECONDS,
         ),
@@ -287,6 +386,7 @@ async def _execute_pipeline(
 
     # ------------------------------------------------------------------
     # Stage 3 — Synthesis
+    # Pass WeatherProfile for location-specific irradiance + cloud cover correction (Req 7.1-7.3)
     # ------------------------------------------------------------------
     logger.info("[%s] Stage 3 — Synthesis starting", pipeline_run_id)
     stage3_start = datetime.now(timezone.utc)
@@ -301,6 +401,7 @@ async def _execute_pipeline(
                 consumption_data=consumption_data,
                 spatial_data=spatial_data,
                 face_shading_factors=face_shading_factors,
+                weather_profile=weather_profile,
             ),
             AGENT_TIMEOUT_SECONDS,
         )
@@ -348,4 +449,7 @@ async def _execute_pipeline(
 
     logger.info("[%s] Safety Gate 3 — FinalProposal valid", pipeline_run_id)
 
-    return final_proposal
+    return PipelineSuccess(
+        proposal=final_proposal,
+        weather_profile_available=weather_profile is not None,
+    )

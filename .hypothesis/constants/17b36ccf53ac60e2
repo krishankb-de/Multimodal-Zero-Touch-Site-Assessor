@@ -1,0 +1,4 @@
+# file: /Users/krish/Desktop/Projects/clean-repo/src/agents/ingestion/reconstruction.py
+# hypothesis_version: 6.131.15
+
+[0.0, 0.5, 0.85, 'Wrote %s', 'colmap.db', 'confidence', 'faces_3d', 'frames', 'mesh_uri', 'overall_confidence', 'point_cloud_uri', 'run_id', 'sparse', 'success', 'tier', 'tier_runtime_s', 'total_runtime_s', 'vertices_3d']

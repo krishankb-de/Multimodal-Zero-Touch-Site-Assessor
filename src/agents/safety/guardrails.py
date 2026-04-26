@@ -21,6 +21,7 @@ from src.common.schemas import (
     SpatialData,
     ThermalLoad,
     ValidationError,
+    WeatherProfile,
     VALID_BREAKER_RATINGS,
     VALID_CYLINDER_SIZES,
 )
@@ -34,6 +35,16 @@ MAX_AC_VOLTAGE = 400   # Volts
 
 # Confidence floor for Gemini outputs
 MIN_CONFIDENCE_SCORE = 0.6
+
+# Germany bounding box (must match geocoding.py constants)
+GERMANY_LAT_MIN = 47.0
+GERMANY_LAT_MAX = 55.5
+GERMANY_LON_MIN = 5.5
+GERMANY_LON_MAX = 15.5
+
+# Plausible annual irradiance range for Germany (kWh/m²/year)
+GERMANY_IRRADIANCE_MIN = 700.0
+GERMANY_IRRADIANCE_MAX = 1400.0
 
 
 def run_guardrail_checks(
@@ -75,6 +86,9 @@ def run_guardrail_checks(
         case "FinalProposal":
             assert isinstance(instance, FinalProposal)
             _check_final_proposal(instance, errors, warnings)
+        case "WeatherProfile":
+            assert isinstance(instance, WeatherProfile)
+            _check_weather_profile(instance, errors, warnings)
 
     return errors, warnings
 
@@ -496,4 +510,118 @@ def _check_final_proposal(
         warnings.append(
             f"Payback period of {data.financial_summary.payback_years:.1f} years "
             "exceeds typical equipment warranty — review financial assumptions"
+        )
+
+
+# ============================================================================
+# WeatherProfile checks  (Req 9.3)
+# ============================================================================
+
+
+def _check_weather_profile(
+    data: WeatherProfile,
+    errors: list[ValidationError],
+    warnings: list[str],
+) -> None:
+    """
+    Domain-specific guardrail checks for WeatherProfile.
+
+    Validates:
+    - Latitude/longitude within Germany bounding box
+    - All monthly arrays have exactly 12 elements
+    - Annual irradiance within plausible range for Germany (700–1400 kWh/m²/year)
+    - quarter_rankings is a permutation of [1, 2, 3, 4]
+    - quarter_rankings[0] == optimal_installation_quarter
+    """
+
+    # Latitude/longitude within Germany bbox
+    # (Pydantic Field constraints already enforce this, but we double-check
+    # here so the guardrail layer is self-contained and testable independently)
+    if not (GERMANY_LAT_MIN <= data.latitude <= GERMANY_LAT_MAX):
+        errors.append(
+            ValidationError(
+                code="WEATHER_LAT_OUT_OF_RANGE",
+                message=(
+                    f"Latitude {data.latitude} is outside Germany bounding box "
+                    f"[{GERMANY_LAT_MIN}, {GERMANY_LAT_MAX}]"
+                ),
+                field="latitude",
+                severity=ErrorSeverity.ERROR,
+            )
+        )
+
+    if not (GERMANY_LON_MIN <= data.longitude <= GERMANY_LON_MAX):
+        errors.append(
+            ValidationError(
+                code="WEATHER_LON_OUT_OF_RANGE",
+                message=(
+                    f"Longitude {data.longitude} is outside Germany bounding box "
+                    f"[{GERMANY_LON_MIN}, {GERMANY_LON_MAX}]"
+                ),
+                field="longitude",
+                severity=ErrorSeverity.ERROR,
+            )
+        )
+
+    # All monthly arrays must have exactly 12 elements
+    monthly_fields = {
+        "monthly_sunshine_hours": data.monthly_sunshine_hours,
+        "monthly_precipitation_mm": data.monthly_precipitation_mm,
+        "monthly_cloud_cover_pct": data.monthly_cloud_cover_pct,
+        "monthly_wind_speed_ms": data.monthly_wind_speed_ms,
+        "monthly_avg_temperature_c": data.monthly_avg_temperature_c,
+    }
+    for field_name, monthly_list in monthly_fields.items():
+        if len(monthly_list) != 12:
+            errors.append(
+                ValidationError(
+                    code="WEATHER_MONTHLY_ARRAY_LENGTH",
+                    message=(
+                        f"{field_name} has {len(monthly_list)} elements; expected exactly 12"
+                    ),
+                    field=field_name,
+                    severity=ErrorSeverity.ERROR,
+                )
+            )
+
+    # Annual irradiance within plausible range for Germany
+    if not (GERMANY_IRRADIANCE_MIN <= data.annual_irradiance_kwh_m2 <= GERMANY_IRRADIANCE_MAX):
+        errors.append(
+            ValidationError(
+                code="WEATHER_IRRADIANCE_OUT_OF_RANGE",
+                message=(
+                    f"Annual irradiance {data.annual_irradiance_kwh_m2:.0f} kWh/m²/year "
+                    f"is outside plausible Germany range "
+                    f"[{GERMANY_IRRADIANCE_MIN:.0f}, {GERMANY_IRRADIANCE_MAX:.0f}]"
+                ),
+                field="annual_irradiance_kwh_m2",
+                severity=ErrorSeverity.ERROR,
+            )
+        )
+
+    # quarter_rankings must be a permutation of [1, 2, 3, 4]
+    if sorted(data.quarter_rankings) != [1, 2, 3, 4]:
+        errors.append(
+            ValidationError(
+                code="WEATHER_QUARTER_RANKINGS_INVALID",
+                message=(
+                    f"quarter_rankings {data.quarter_rankings} is not a permutation "
+                    "of [1, 2, 3, 4]"
+                ),
+                field="quarter_rankings",
+                severity=ErrorSeverity.ERROR,
+            )
+        )
+    elif data.quarter_rankings[0] != data.optimal_installation_quarter:
+        # Only check this if rankings are otherwise valid
+        errors.append(
+            ValidationError(
+                code="WEATHER_OPTIMAL_QUARTER_MISMATCH",
+                message=(
+                    f"quarter_rankings[0]={data.quarter_rankings[0]} does not match "
+                    f"optimal_installation_quarter={data.optimal_installation_quarter}"
+                ),
+                field="optimal_installation_quarter",
+                severity=ErrorSeverity.ERROR,
+            )
         )

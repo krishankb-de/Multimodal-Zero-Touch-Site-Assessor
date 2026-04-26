@@ -1,0 +1,4 @@
+# file: /Users/krish/Desktop/Projects/clean-repo/src/agents/thermodynamic/agent.py
+# hypothesis_version: 6.131.15
+
+[1.15, 1.2, 3.5, 1000, '1.0.0', 'floor', 'roof', 'walls', 'windows']

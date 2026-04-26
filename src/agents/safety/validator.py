@@ -29,6 +29,7 @@ from src.common.schemas import (
     ThermalLoad,
     ValidationError,
     ValidationResult,
+    WeatherProfile,
 )
 from src.agents.safety.guardrails import run_guardrail_checks
 
@@ -44,6 +45,7 @@ SCHEMA_REGISTRY: dict[str, type] = {
     "ElectricalAssessment": ElectricalAssessment,
     "BehavioralProfile": BehavioralProfile,
     "FinalProposal": FinalProposal,
+    "WeatherProfile": WeatherProfile,  # Req 9.3 — validated at Safety Gate 1
 }
 
 # Type alias for all valid handoff payloads
@@ -56,6 +58,7 @@ HandoffPayload = Union[
     ElectricalAssessment,
     BehavioralProfile,
     FinalProposal,
+    WeatherProfile,
 ]
 
 

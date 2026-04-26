@@ -1,0 +1,4 @@
+# file: /Users/krish/Desktop/Projects/clean-repo/src/common/glb_validator.py
+# hypothesis_version: 6.131.15
+
+[b'glTF', 2.0, 50.0, 280000, 920000, 5130562, 5200000, 6100000, 1313821514, '3D_Modell Ruhr.glb', '<I', 'Brandenburg', 'CESIUM_RTC', 'DRACO_EMPTY_GEOMETRY', 'Datasets', 'Exp 3D-Modells', 'GLB_NOT_FOUND', 'GLB_PARSE_ERROR', 'Hamburg', 'North Germany', 'PRIMITIVE_COUNT_HIGH', 'Ruhr', 'UNKNOWN_REGION', 'bounds', 'bufferView', 'bufferViews', 'byteLength', 'byteOffset', 'center', 'error', 'extensions', 'extensionsUsed', 'inf', 'meshes', 'primitives', 'warning']

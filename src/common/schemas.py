@@ -237,6 +237,8 @@ class SpatialData(BaseModel):
     mesh_uri: Optional[str] = None
     point_cloud_uri: Optional[str] = None
     reconstruction_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    # Feature: weather-intelligence-house-dimensions — optional dimension estimation
+    house_dimensions: Optional["HouseDimensions"] = None
 
 
 # ============================================================================
@@ -587,6 +589,8 @@ class FinalProposal(BaseModel):
     compliance: Compliance
     human_signoff: HumanSignoff
     metadata: ProposalMetadata
+    # Feature: weather-intelligence-house-dimensions — optional installation plan
+    installation_plan: Optional["InstallationPlan"] = None
 
 
 # ============================================================================
@@ -663,3 +667,154 @@ class OptimizationDelta(BaseModel):
     savings_delta_eur: Optional[float]
     new_profile: BehavioralProfile
     optimized_at: datetime
+
+
+# ============================================================================
+# 11. WeatherProfile  (Weather Intelligence Service → Structural, Thermodynamic, Synthesis)
+# ============================================================================
+
+
+class CleaningSchedule(BaseModel):
+    """Recommended solar panel cleaning schedule based on local environmental conditions."""
+
+    model_config = {"extra": "forbid"}
+
+    frequency_per_year: int = Field(ge=1, le=12, description="Number of cleaning sessions per year")
+    recommended_months: list[int] = Field(
+        min_length=1,
+        max_length=12,
+        description="Calendar months (1=Jan) recommended for cleaning",
+    )
+
+
+class WeatherProfile(BaseModel):
+    """
+    Location-specific historical weather intelligence.
+
+    Output of the Weather Intelligence Service — fed to structural, thermodynamic,
+    and synthesis agents to replace static regional climate data.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    # Geographic coordinates (Germany bounding box enforced)
+    latitude: float = Field(ge=47.0, le=55.5, description="Degrees North (Germany: 47.0–55.5)")
+    longitude: float = Field(ge=5.5, le=15.5, description="Degrees East (Germany: 5.5–15.5)")
+
+    # Data provenance
+    data_source: str = Field(description="e.g. 'open-meteo-archive' or 'static-regional'")
+    date_range_start: date
+    date_range_end: date
+
+    # Monthly aggregates — 12 floats, index 0 = January
+    monthly_sunshine_hours: list[float] = Field(
+        min_length=12, max_length=12,
+        description="Average daily sunshine hours per month",
+    )
+    monthly_precipitation_mm: list[float] = Field(
+        min_length=12, max_length=12,
+        description="Total precipitation in mm per month",
+    )
+    monthly_cloud_cover_pct: list[float] = Field(
+        min_length=12, max_length=12,
+        description="Average cloud cover percentage per month (0–100)",
+    )
+    monthly_wind_speed_ms: list[float] = Field(
+        min_length=12, max_length=12,
+        description="Average wind speed in m/s per month",
+    )
+    monthly_avg_temperature_c: list[float] = Field(
+        min_length=12, max_length=12,
+        description="Average ambient temperature in °C per month",
+    )
+
+    # Derived solar metrics
+    annual_irradiance_kwh_m2: float = Field(ge=0, description="Location-specific annual irradiance kWh/m²/year")
+    sunny_days_per_year: int = Field(ge=0, le=366, description="Days with sunshine duration > 6 hours")
+    seasonal_sunshine_hours: list[float] = Field(
+        min_length=4, max_length=4,
+        description="Quarterly avg daily sunshine hours [Q1=Jan–Mar, Q2=Apr–Jun, Q3=Jul–Sep, Q4=Oct–Dec]",
+    )
+
+    # Installation & maintenance
+    optimal_installation_quarter: int = Field(ge=1, le=4, description="Best quarter (1–4) for installation")
+    quarter_rankings: list[int] = Field(
+        min_length=4, max_length=4,
+        description="Quarters ranked best to worst for installation (e.g. [2, 3, 1, 4])",
+    )
+    cleaning_schedule: CleaningSchedule
+
+    # Metadata
+    metadata: SimpleMetadata
+
+
+# ============================================================================
+# 12. HouseDimensions  (Dimension Estimator → SpatialData extension)
+# ============================================================================
+
+
+class DimensionConfidence(BaseModel):
+    """Per-dimension confidence scores from the Gemini dimension estimator."""
+
+    model_config = {"extra": "forbid"}
+
+    ridge_height: float = Field(ge=0.0, le=1.0)
+    eave_height: float = Field(ge=0.0, le=1.0)
+    footprint_width: float = Field(ge=0.0, le=1.0)
+    footprint_depth: float = Field(ge=0.0, le=1.0)
+
+
+class HouseDimensions(BaseModel):
+    """
+    Estimated building envelope dimensions extracted from roofline video.
+
+    Attached to SpatialData when the Dimension Estimator succeeds.
+    Improves thermodynamic heat load calculations and structural shading.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    ridge_height_m: float = Field(ge=2.0, le=25.0, description="Highest point of roof above ground (m)")
+    eave_height_m: float = Field(ge=1.5, le=20.0, description="Lowest edge of roof above ground (m)")
+    footprint_width_m: float = Field(ge=3.0, le=50.0, description="Building footprint width (m)")
+    footprint_depth_m: float = Field(ge=3.0, le=50.0, description="Building footprint depth (m)")
+    estimated_wall_area_m2: float = Field(ge=10.0, description="Estimated total external wall area (m²)")
+    estimated_volume_m3: float = Field(ge=20.0, description="Estimated building volume (m³)")
+    confidence: DimensionConfidence
+
+
+# ============================================================================
+# 13. InstallationPlan  (Synthesis Agent → FinalProposal extension)
+# ============================================================================
+
+
+class PanelPosition(BaseModel):
+    """Position of a single panel relative to the building footprint."""
+
+    model_config = {"extra": "forbid"}
+
+    face_id: str
+    x_offset_m: float = Field(description="Horizontal offset from building corner (m)")
+    y_offset_m: float = Field(description="Vertical offset from eave (m)")
+    width_m: float = Field(ge=0.1)
+    height_m: float = Field(ge=0.1)
+    orientation: PanelOrientation
+
+
+class InstallationPlan(BaseModel):
+    """
+    Visual installation plan showing panel positions relative to house dimensions.
+
+    Generated by the Synthesis Agent when HouseDimensions are available.
+    Intended for installers and customers to understand the proposed installation.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    building_width_m: float = Field(ge=3.0)
+    building_depth_m: float = Field(ge=3.0)
+    building_ridge_height_m: float = Field(ge=2.0)
+    building_eave_height_m: float = Field(ge=1.5)
+    panel_positions: list[PanelPosition]
+    panels_per_face: dict[str, int] = Field(description="Panel count keyed by roof face ID")
+    total_kwp: float = Field(ge=0)

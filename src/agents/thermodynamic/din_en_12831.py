@@ -256,3 +256,66 @@ def recommend_heat_pump_capacity(
     # Standard residential heat pump sizes
     standard_sizes = [4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 25, 30]
     return min((s for s in standard_sizes if s >= design_heat_load_kw), default=30)
+
+
+def calculate_transmission_loss_from_dimensions(
+    wall_area_m2: float,
+    u_values: dict[str, float],
+    delta_temp: float,
+    roof_area_m2: float | None = None,
+    floor_area_m2: float | None = None,
+) -> float:
+    """
+    Calculate transmission heat loss using actual building dimensions.
+
+    Used when HouseDimensions are available from the Dimension Estimator.
+    Provides more accurate results than the roof-area proxy method.
+
+    Args:
+        wall_area_m2:  Estimated total external wall area (m²).
+        u_values:      U-values for walls, roof, floor, windows.
+        delta_temp:    Temperature difference (θ_int - θ_ext) in K.
+        roof_area_m2:  Roof area (m²). Estimated from wall_area if None.
+        floor_area_m2: Floor area (m²). Estimated from wall_area if None.
+
+    Returns:
+        Transmission heat loss in kW.
+    """
+    window_area = wall_area_m2 * WINDOW_TO_WALL_RATIO
+    net_wall_area = wall_area_m2 - window_area
+
+    # Estimate roof and floor from wall area if not provided
+    if roof_area_m2 is None:
+        roof_area_m2 = wall_area_m2 * 0.4  # rough ratio for typical house
+    if floor_area_m2 is None:
+        floor_area_m2 = wall_area_m2 * 0.4
+
+    transmission_loss_w = delta_temp * (
+        u_values["walls"] * net_wall_area
+        + u_values["windows"] * window_area
+        + u_values["roof"] * roof_area_m2
+        + u_values["floor"] * floor_area_m2
+    )
+    return transmission_loss_w / 1000.0
+
+
+def calculate_ventilation_loss_from_volume(
+    volume_m3: float,
+    delta_temp: float,
+    air_change_rate: float = DEFAULT_AIR_CHANGE_RATE,
+) -> float:
+    """
+    Calculate ventilation heat loss using actual building volume.
+
+    Used when HouseDimensions are available from the Dimension Estimator.
+
+    Args:
+        volume_m3:       Estimated building volume (m³).
+        delta_temp:      Temperature difference in K.
+        air_change_rate: Air changes per hour.
+
+    Returns:
+        Ventilation heat loss in kW.
+    """
+    ventilation_loss_w = AIR_HEAT_CAPACITY * air_change_rate * volume_m3 * delta_temp
+    return ventilation_loss_w / 1000.0

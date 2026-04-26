@@ -11,6 +11,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from src.common import climate as climate_data
 from src.common.config import config
@@ -27,13 +28,17 @@ from src.common.schemas import (
     FinancialSummary,
     HeatPumpDesign,
     HumanSignoff,
+    InstallationPlan,
     ModuleLayout,
+    PanelOrientation,
+    PanelPosition,
     ProposalMetadata,
     PVDesign,
     SignoffStatus,
     SpatialData,
     SystemDesign,
     ThermalLoad,
+    WeatherProfile,
 )
 
 
@@ -75,6 +80,135 @@ def _compute_shading_multiplier(
     return weighted / total_panels
 
 
+def _compute_annual_yield_kwh(
+    module_layout: ModuleLayout,
+    shading_multiplier: float,
+    weather_profile: Optional[WeatherProfile],
+    region: str,
+) -> tuple[float, str]:
+    """
+    Compute annual PV yield and return (yield_kwh, data_source_note).
+
+    When a WeatherProfile is available, uses location-specific irradiance
+    with a cloud cover correction factor (Req 7.1, 7.2).
+    Falls back to static regional data otherwise (Req 7.3).
+    """
+    if weather_profile is not None:
+        # Location-specific irradiance from historical data (Req 7.1)
+        irradiance = weather_profile.annual_irradiance_kwh_m2
+
+        # Cloud cover correction factor: each 1% of cloud cover reduces yield
+        # by 0.5% relative to clear-sky baseline (empirical approximation).
+        # avg_cloud_cover_pct of 0 → factor 1.0; 100% → factor 0.5 (Req 7.2)
+        avg_cloud_cover_pct = sum(weather_profile.monthly_cloud_cover_pct) / 12.0
+        cloud_correction = 1.0 - (avg_cloud_cover_pct / 100.0) * 0.5
+
+        annual_yield_kwh = (
+            module_layout.total_kwp
+            * irradiance
+            * climate_data.SYSTEM_EFFICIENCY
+            * cloud_correction
+            * shading_multiplier
+        )
+        data_source_note = (
+            f"Climate data: location-specific (lat={weather_profile.latitude:.4f}, "
+            f"lon={weather_profile.longitude:.4f}), "
+            f"irradiance={irradiance:.0f} kWh/m²/year, "
+            f"avg_cloud_cover={avg_cloud_cover_pct:.1f}%, "
+            f"cloud_correction_factor={cloud_correction:.3f}"
+        )
+    else:
+        # Static regional fallback (Req 7.3)
+        annual_yield_kwh = (
+            climate_data.annual_pv_yield_kwh(module_layout.total_kwp, region)
+            * shading_multiplier
+        )
+        data_source_note = (
+            f"Climate data: static regional (region={region}), "
+            f"irradiance={climate_data.annual_irradiance_kwh_m2(region):.0f} kWh/m²/year, "
+            f"design_outdoor_temp={climate_data.design_outdoor_temp_c(region):.1f}°C"
+        )
+
+    return annual_yield_kwh, data_source_note
+
+
+def _generate_installation_plan(
+    spatial_data: SpatialData,
+    module_layout: ModuleLayout,
+) -> Optional[InstallationPlan]:
+    """
+    Generate an InstallationPlan when HouseDimensions are available (Req 14.1–14.3).
+
+    Lays out panels on each roof face using a simple row-by-column grid starting
+    from the top-left corner of each face. Panel dimensions default to 1.0 m × 1.7 m
+    (portrait) or 1.7 m × 1.0 m (landscape) when not specified in the FaceLayout.
+
+    Returns None when HouseDimensions are not available (Req 14.3).
+    """
+    if spatial_data is None or spatial_data.house_dimensions is None:
+        return None
+
+    dims = spatial_data.house_dimensions
+
+    # Default panel physical dimensions (metres)
+    DEFAULT_PANEL_W_PORTRAIT = 1.0
+    DEFAULT_PANEL_H_PORTRAIT = 1.7
+
+    panel_positions: list[PanelPosition] = []
+    panels_per_face: dict[str, int] = {}
+
+    for face in module_layout.panels:
+        if face.count == 0:
+            continue
+
+        # Resolve physical panel size
+        if face.panel_dimensions_mm is not None:
+            pw_m = face.panel_dimensions_mm.width / 1000.0
+            ph_m = face.panel_dimensions_mm.length / 1000.0
+        else:
+            pw_m = DEFAULT_PANEL_W_PORTRAIT
+            ph_m = DEFAULT_PANEL_H_PORTRAIT
+
+        # Swap for landscape orientation
+        if face.orientation == PanelOrientation.LANDSCAPE:
+            pw_m, ph_m = ph_m, pw_m
+
+        # Simple grid layout: fill columns left-to-right, rows top-to-bottom
+        # Use building width as the available face width
+        face_width_m = dims.footprint_width_m
+        cols = max(1, int(face_width_m / pw_m))
+
+        placed = 0
+        row = 0
+        while placed < face.count:
+            col = placed % cols
+            if placed > 0 and col == 0:
+                row += 1
+            panel_positions.append(
+                PanelPosition(
+                    face_id=face.face_id,
+                    x_offset_m=round(col * pw_m, 3),
+                    y_offset_m=round(row * ph_m, 3),
+                    width_m=round(pw_m, 3),
+                    height_m=round(ph_m, 3),
+                    orientation=face.orientation,
+                )
+            )
+            placed += 1
+
+        panels_per_face[face.face_id] = face.count
+
+    return InstallationPlan(
+        building_width_m=dims.footprint_width_m,
+        building_depth_m=dims.footprint_depth_m,
+        building_ridge_height_m=dims.ridge_height_m,
+        building_eave_height_m=dims.eave_height_m,
+        panel_positions=panel_positions,
+        panels_per_face=panels_per_face,
+        total_kwp=module_layout.total_kwp,
+    )
+
+
 async def run(
     module_layout: ModuleLayout,
     thermal_load: ThermalLoad,
@@ -83,6 +217,7 @@ async def run(
     consumption_data: ConsumptionData | None = None,
     spatial_data: SpatialData | None = None,
     face_shading_factors: dict[str, float] | None = None,
+    weather_profile: Optional[WeatherProfile] = None,
 ) -> FinalProposal:
     """
     Assemble a FinalProposal from all domain agent outputs.
@@ -94,6 +229,12 @@ async def run(
     4. Build compliance section.
     5. Set human_signoff to required/pending.
     6. Generate proposal metadata.
+    7. Generate SLD and attach reference.
+    8. Generate InstallationPlan when HouseDimensions are available.
+
+    Args:
+        weather_profile: Optional WeatherProfile — when present, uses location-specific
+                         irradiance with cloud cover correction (Req 7.1, 7.2, 7.3).
     """
 
     # ------------------------------------------------------------------
@@ -113,7 +254,11 @@ async def run(
     region = config.market.region
     # Apply per-face shading correction when available (weighted by panel count per face)
     shading_multiplier = _compute_shading_multiplier(module_layout, face_shading_factors)
-    annual_yield_kwh = climate_data.annual_pv_yield_kwh(module_layout.total_kwp, region) * shading_multiplier
+
+    # Use location-specific irradiance when WeatherProfile is available (Req 7.1, 7.2)
+    annual_yield_kwh, data_source_note = _compute_annual_yield_kwh(
+        module_layout, shading_multiplier, weather_profile, region
+    )
 
     pv = PVDesign(
         total_kwp=module_layout.total_kwp,
@@ -185,9 +330,7 @@ async def run(
 
     regulatory_notes: list[str] = [
         "Human installer sign-off required before proposal delivery",
-        f"Climate data: region={region}, "
-        f"irradiance={climate_data.annual_irradiance_kwh_m2(region):.0f} kWh/m²/year, "
-        f"design_outdoor_temp={climate_data.design_outdoor_temp_c(region):.1f}°C",
+        data_source_note,  # Req 7.3: data source note (location-specific or static)
     ]
     if pricing.warning:
         regulatory_notes.append(pricing.warning)
@@ -221,16 +364,22 @@ async def run(
         all_validations_passed=None,  # Set by orchestrator after Safety Agent validation
     )
 
+    # ------------------------------------------------------------------
+    # 7. Generate InstallationPlan when HouseDimensions are available (Req 14.1–14.3)
+    # ------------------------------------------------------------------
+    installation_plan = _generate_installation_plan(spatial_data, module_layout) if spatial_data else None
+
     proposal = FinalProposal(
         system_design=system_design,
         financial_summary=financial_summary,
         compliance=compliance,
         human_signoff=human_signoff,
         metadata=metadata,
+        installation_plan=installation_plan,
     )
 
     # ------------------------------------------------------------------
-    # 7. Generate SLD and attach reference
+    # 8. Generate SLD and attach reference
     # ------------------------------------------------------------------
     sld_dir = Path(__file__).resolve().parents[3] / "sld_output"
     sld_path = sld_generator.write_sld(proposal, sld_dir)

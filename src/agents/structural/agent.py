@@ -8,7 +8,9 @@ Uses the layout_engine for deterministic panel placement — no LLM calls.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timezone
+from typing import Optional
 
 from src.common.schemas import (
     CalculationMetadata,
@@ -18,6 +20,7 @@ from src.common.schemas import (
     SpatialData,
     StringConfig,
     StringLayout,
+    WeatherProfile,
 )
 from src.agents.structural.layout_engine import (
     DEFAULT_PANEL_LENGTH_MM,
@@ -29,6 +32,7 @@ from src.agents.structural.layout_engine import (
     fit_panels_on_face_polygon,
 )
 from src.agents.structural.shading import (
+    DEFAULT_LATITUDE_DEG,
     FaceSpec,
     annual_shading_factor,
     compute_monthly_irradiance_factors,
@@ -39,24 +43,47 @@ logger = logging.getLogger(__name__)
 AGENT_VERSION = "1.0.0"
 
 
-def run(spatial_data: SpatialData) -> tuple[ModuleLayout, dict[str, float]]:
+def run(
+    spatial_data: SpatialData,
+    weather_profile: Optional[WeatherProfile] = None,
+) -> tuple[ModuleLayout, dict[str, float]]:
     """
     Execute the Structural Agent pipeline.
 
     1. For each roof face, calculate panel placement (polygon-clipped if 3D data available)
     2. Apply obstacle exclusion zones
-    3. Compute per-face shading factors
+    3. Compute per-face shading factors (uses location latitude from WeatherProfile when available)
     4. Design string configurations within voltage limits
     5. Produce a validated ModuleLayout
 
     Args:
-        spatial_data: Validated SpatialData from the Ingestion Agent.
+        spatial_data:    Validated SpatialData from the Ingestion Agent.
+        weather_profile: Optional WeatherProfile — when present, uses location-specific
+                         latitude for sun-path shading calculations (Req 8.1).
 
     Returns:
         Tuple of (ModuleLayout, face_shading_factors) where face_shading_factors
         maps face_id → annual shading factor (0–1). Synthesis uses this to
         adjust annual yield.
     """
+    # Determine latitude for shading calculations (Req 8.1)
+    latitude_deg = DEFAULT_LATITUDE_DEG
+    if weather_profile is not None:
+        latitude_deg = weather_profile.latitude
+        logger.info(
+            "Structural Agent: using location-specific latitude=%.4f° from WeatherProfile",
+            latitude_deg,
+        )
+
+    # Determine building height for self-shading (Req 13.2)
+    building_height_m: float | None = None
+    if spatial_data.house_dimensions is not None:
+        building_height_m = spatial_data.house_dimensions.ridge_height_m
+        logger.info(
+            "Structural Agent: using building ridge height=%.1f m from HouseDimensions",
+            building_height_m,
+        )
+
     logger.info("Structural Agent: starting module layout for %d roof faces", len(spatial_data.roof.faces))
 
     placements = []
@@ -82,8 +109,6 @@ def run(spatial_data: SpatialData) -> tuple[ModuleLayout, dict[str, float]]:
             obstacle_area_m2=total_obstacle_area,
             face_area_m2=face.area_m2,
         ))
-
-        # 3D polygon path — use Sutherland-Hodgman clipping when vertices available
         placement = None
         if face.polygon_vertices_3d and len(face.polygon_vertices_3d) >= 3:
             placement = fit_panels_on_face_polygon(
@@ -113,8 +138,23 @@ def run(spatial_data: SpatialData) -> tuple[ModuleLayout, dict[str, float]]:
             placement.count * placement.panel_watt_peak / 1000,
         )
 
-    # Compute per-face shading factors
-    monthly_factors = compute_monthly_irradiance_factors(face_specs)
+    # Tilt validation refinement using HouseDimensions (Req 13.1)
+    if building_height_m is not None and spatial_data.house_dimensions is not None:
+        eave_h = spatial_data.house_dimensions.eave_height_m
+        ridge_h = spatial_data.house_dimensions.ridge_height_m
+        roof_rise = ridge_h - eave_h
+        for face in spatial_data.roof.faces:
+            # Compute implied tilt from rise/run if footprint is available
+            half_width = spatial_data.house_dimensions.footprint_width_m / 2.0
+            if half_width > 0:
+                implied_tilt_deg = math.degrees(math.atan(roof_rise / half_width))
+                logger.debug(
+                    "  Face '%s': implied tilt from dimensions=%.1f° (schema tilt=%.1f°)",
+                    face.id, implied_tilt_deg, face.tilt_deg,
+                )
+
+    # Compute per-face shading factors (use location-specific latitude when available)
+    monthly_factors = compute_monthly_irradiance_factors(face_specs, latitude_deg=latitude_deg)
     face_shading: dict[str, float] = {
         fid: annual_shading_factor(factors)
         for fid, factors in monthly_factors.items()

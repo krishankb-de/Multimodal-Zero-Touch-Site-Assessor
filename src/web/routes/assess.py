@@ -6,10 +6,10 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from src.agents.orchestrator.agent import PipelineError, run_pipeline
+from src.agents.orchestrator.agent import PipelineError, PipelineSuccess, run_pipeline
 from src.common.artifact_store import mesh_path, point_cloud_path, run_dir
 from src.web.store import proposal_store
 
@@ -28,6 +28,7 @@ class AssessResponse(BaseModel):
     mesh_uri: Optional[str] = None
     point_cloud_uri: Optional[str] = None
     reconstruction_confidence: Optional[float] = None
+    weather_profile_available: Optional[bool] = None
 
 
 @router.post("/assess", response_model=AssessResponse)
@@ -35,9 +36,16 @@ async def assess(
     video: UploadFile = File(...),
     photo: UploadFile = File(...),
     bill: UploadFile = File(...),
+    location: Optional[str] = Form(default=None),
 ) -> AssessResponse:
     """
     Accept multipart file uploads, validate them, and trigger the pipeline.
+
+    Args:
+        video:    Roofline video file.
+        photo:    Electrical panel photo file.
+        bill:     Utility bill PDF file.
+        location: Optional address or place name for location-specific weather data (Req 17.2).
 
     Returns pipeline_run_id and status on success.
     Returns HTTP 413 if any file exceeds 100 MB.
@@ -73,8 +81,8 @@ async def assess(
         photo_path.write_bytes(photo_bytes)
         pdf_path.write_bytes(bill_bytes)
 
-        # Run the pipeline
-        result = await run_pipeline(video_path, photo_path, pdf_path)
+        # Run the pipeline — pass optional location for weather intelligence (Req 17.1)
+        result = await run_pipeline(video_path, photo_path, pdf_path, location=location)
 
     if isinstance(result, PipelineError):
         if result.error_type == "validation_failure":
@@ -101,10 +109,10 @@ async def assess(
             )
 
     # Store the proposal
-    proposal_store[result.metadata.pipeline_run_id] = result
+    proposal_store[result.proposal.metadata.pipeline_run_id] = result.proposal
 
     # Resolve 3D artifact URIs if available from the pipeline result
-    run_id = result.metadata.pipeline_run_id
+    run_id = result.proposal.metadata.pipeline_run_id
     mp = mesh_path(run_id)
     pcp = point_cloud_path(run_id)
 
@@ -113,4 +121,5 @@ async def assess(
         status="completed",
         mesh_uri=f"/api/v1/artifacts/{run_id}/mesh.glb" if mp.exists() else None,
         point_cloud_uri=f"/api/v1/artifacts/{run_id}/point_cloud.ply" if pcp.exists() else None,
+        weather_profile_available=result.weather_profile_available,  # Req 17.3
     )

@@ -1,0 +1,4 @@
+# file: /Users/krish/Desktop/Projects/clean-repo/src/agents/synthesis/reonic_dataset.py
+# hypothesis_version: 6.131.15
+
+[0.0, 1.0, 16.0, 140.0, 200.0, 1000.0, 100, 'Battery', 'Datasets', 'Heatpump', 'Inverter', 'Module', 'Project Data', 'REONIC_DATA_DIR', 'battery_brand', 'battery_capacity_kwh', 'battery_kwh', 'component_brand', 'component_name', 'component_type', 'district', 'electric', 'energy_demand_wh', 'energy_price_per_wh', 'fern', 'gas', 'has_ev', 'heatpump_brand', 'heatpump_kw', 'heatpump_name', 'house_size_sqm', 'inverter_brand', 'inverter_name', 'lpg', 'module_watt_peak', 'none', 'oil', 'panel_brand', 'panel_name', 'project_id', 'propane', 'pv_kwp', 'quantity', 'resistance', 'true', 'utf-8']

@@ -22,7 +22,7 @@ import pytest
 import httpx
 from fastapi.testclient import TestClient
 
-from src.agents.orchestrator.agent import PipelineError
+from src.agents.orchestrator.agent import PipelineError, PipelineSuccess
 from src.common.schemas import (
     BatteryDesign,
     Compliance,
@@ -74,6 +74,11 @@ def _make_final_proposal(pipeline_run_id: str | None = None) -> FinalProposal:
             pipeline_run_id=run_id,
         ),
     )
+
+
+def _make_pipeline_success(pipeline_run_id: str | None = None) -> PipelineSuccess:
+    """Build a PipelineSuccess wrapping a minimal valid FinalProposal for testing."""
+    return PipelineSuccess(proposal=_make_final_proposal(pipeline_run_id))
 
 
 def _make_pipeline_error(error_type: str = "agent_exception") -> PipelineError:
@@ -160,7 +165,7 @@ class TestAssessEndpoint:
         proposal = _make_final_proposal()
         with patch(
             "src.web.routes.assess.run_pipeline",
-            new=AsyncMock(return_value=proposal),
+            new=AsyncMock(return_value=PipelineSuccess(proposal=proposal)),
         ):
             response = _upload_files(client)
 
@@ -175,7 +180,7 @@ class TestAssessEndpoint:
         proposal = _make_final_proposal()
         with patch(
             "src.web.routes.assess.run_pipeline",
-            new=AsyncMock(return_value=proposal),
+            new=AsyncMock(return_value=PipelineSuccess(proposal=proposal)),
         ):
             _upload_files(client)
 
@@ -186,7 +191,7 @@ class TestAssessEndpoint:
         oversized = b"x" * (100 * 1024 * 1024 + 1)  # 100 MB + 1 byte
         with patch(
             "src.web.routes.assess.run_pipeline",
-            new=AsyncMock(return_value=_make_final_proposal()),
+            new=AsyncMock(return_value=_make_pipeline_success()),
         ):
             response = client.post(
                 "/api/v1/assess",
@@ -203,7 +208,7 @@ class TestAssessEndpoint:
         oversized = b"x" * (100 * 1024 * 1024 + 1)
         with patch(
             "src.web.routes.assess.run_pipeline",
-            new=AsyncMock(return_value=_make_final_proposal()),
+            new=AsyncMock(return_value=_make_pipeline_success()),
         ):
             response = client.post(
                 "/api/v1/assess",
@@ -220,7 +225,7 @@ class TestAssessEndpoint:
         oversized = b"x" * (100 * 1024 * 1024 + 1)
         with patch(
             "src.web.routes.assess.run_pipeline",
-            new=AsyncMock(return_value=_make_final_proposal()),
+            new=AsyncMock(return_value=_make_pipeline_success()),
         ):
             response = client.post(
                 "/api/v1/assess",
@@ -237,7 +242,7 @@ class TestAssessEndpoint:
         oversized = b"x" * (100 * 1024 * 1024 + 1)
         with patch(
             "src.web.routes.assess.run_pipeline",
-            new=AsyncMock(return_value=_make_final_proposal()),
+            new=AsyncMock(return_value=_make_pipeline_success()),
         ):
             response = client.post(
                 "/api/v1/assess",

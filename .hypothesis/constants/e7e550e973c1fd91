@@ -1,0 +1,4 @@
+# file: /Users/krish/Desktop/Projects/clean-repo/src/services/weather/analysis.py
+# hypothesis_version: 6.131.15
+
+[0.0, 0.5, 3.0, 5.0, 6.0, 7.0, 300.0, 365.25, 500.0, 800.0, 366, 'open-meteo-archive']

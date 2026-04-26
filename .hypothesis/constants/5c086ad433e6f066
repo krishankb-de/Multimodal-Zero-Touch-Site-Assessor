@@ -1,0 +1,4 @@
+# file: /Users/krish/Desktop/Projects/clean-repo/src/web/routes/proposals.py
+# hypothesis_version: 6.131.15
+
+[401, 404, 422, 'approve', 'human_signoff', 'installer_id', 'notes', 'reject', 'signed_at', 'status']

@@ -1,0 +1,4 @@
+# file: /Users/krish/Desktop/Projects/clean-repo/src/agents/synthesis/pioneer_client.py
+# hypothesis_version: 6.131.15
+
+[0.0, 30.0, 600.0, 800.0, 1200.0, 3000.0, 400, 'Authorization', 'Content-Type', 'application/json', 'battery_cost_eur', 'battery_model', 'choices', 'content', 'heat_pump_cost_eur', 'heat_pump_model', 'inverter_model', 'json_object', 'max_tokens', 'message', 'messages', 'model', 'panel_model', 'pioneer_slm', 'pv_cost_eur', 'response_format', 'role', 'rule_based_fallback', 'seed', 'temperature', 'type', 'user']

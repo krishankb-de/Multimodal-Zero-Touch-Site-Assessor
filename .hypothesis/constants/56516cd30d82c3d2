@@ -1,0 +1,4 @@
+# file: /Users/krish/Desktop/Projects/clean-repo/src/services/weather/historical.py
+# hypothesis_version: 6.131.15
+
+[0.0, 3.6, 30.0, 3600.0, 365, ',', 'Europe/Berlin', 'cloud_cover', 'daily', 'end_date', 'format', 'hourly', 'json', 'latitude', 'longitude', 'precipitation_sum', 'start_date', 'sunshine_duration', 'temperature_2m_max', 'temperature_2m_mean', 'temperature_2m_min', 'time', 'timezone', 'wind_speed_10m_max']

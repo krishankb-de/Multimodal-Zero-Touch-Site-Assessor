@@ -1,0 +1,4 @@
+# file: /Users/krish/Desktop/Projects/clean-repo/src/agents/safety/guardrails.py
+# hypothesis_version: 6.131.15
+
+[0.05, 0.1, 0.22, 0.5, 0.6, 0.8, 1.0, 1.1, 5.5, 7.0, 15.5, 47.0, 55.5, 700.0, 1000.0, 1400.0, 230, 400, 1000, 'AREA_INCONSISTENCY', 'BATTERY_TOO_LARGE', 'BATTERY_TOO_SMALL', 'BehavioralProfile', 'CONSUMPTION_MISMATCH', 'COP_OUT_OF_RANGE', 'ConsumptionData', 'ElectricalAssessment', 'ElectricalData', 'FinalProposal', 'INVALID_FACE_REF', 'KWP_MISMATCH', 'MISSING_3D_POLYGONS', 'MISSING_MONTHS', 'ModuleLayout', 'PANEL_COUNT_MISMATCH', 'SpatialData', 'ThermalLoad', 'VOLTAGE_EXCEEDED', 'VOLUME_INCONSISTENCY', 'WeatherProfile', 'latitude', 'longitude', 'monthly_breakdown', 'quarter_rankings', 'roof.faces', 'roof.obstacles', 'total_kwp', 'total_panels', 'upgrades_required']

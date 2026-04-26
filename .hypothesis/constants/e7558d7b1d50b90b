@@ -1,0 +1,4 @@
+# file: /Users/krish/Desktop/Projects/clean-repo/src/web/routes/installations.py
+# hypothesis_version: 6.131.15
+
+[201, 404, 422, '/installations', 'telemetry']
