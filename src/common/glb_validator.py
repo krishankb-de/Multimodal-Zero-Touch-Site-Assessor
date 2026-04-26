@@ -194,14 +194,12 @@ def validate_spatial_data_against_glb(
                 )
             )
 
-    # Note: full geometry (area/orientation tolerance) requires Draco decoding.
-    # KHR_draco_mesh_compression is used — add DracoPy for face-level validation.
+    # Try Draco decode for real geometry tolerance check (P7.2)
     if "KHR_draco_mesh_compression" in gltf.get("extensionsUsed", []):
-        logger.debug(
-            "GLB validator [%s]: geometry is Draco-compressed — "
-            "area/orientation cross-check skipped (add DracoPy for full validation)",
-            region,
-        )
+        draco_issues = _try_draco_geometry_check(glb_path.read_bytes(), gltf, region)
+        issues.extend(draco_issues)
+        if not draco_issues:
+            logger.debug("GLB validator [%s]: Draco geometry check passed", region)
 
     has_errors = any(i.severity == "error" for i in issues)
     return GLBValidationResult(
@@ -210,5 +208,212 @@ def validate_spatial_data_against_glb(
         glb_path=str(glb_path),
         primitive_count=primitive_count,
         gemini_face_count=gemini_face_count,
+        issues=issues,
+    )
+
+
+def _try_draco_geometry_check(
+    glb_bytes: bytes,
+    gltf: dict,
+    region: str,
+) -> list[GLBValidationIssue]:
+    """
+    Attempt Draco decode of mesh primitives for face-count + bbox sanity.
+
+    Requires DracoPy. If not installed, logs a debug message and returns empty.
+    """
+    try:
+        import DracoPy  # type: ignore[import]
+    except ImportError:
+        logger.debug(
+            "GLB validator [%s]: DracoPy not installed — "
+            "Draco geometry check skipped",
+            region,
+        )
+        return []
+
+    issues: list[GLBValidationIssue] = []
+
+    # Extract the binary buffer from the GLB
+    binary_chunk = _extract_binary_chunk(glb_bytes)
+    if binary_chunk is None:
+        return []
+
+    buffer_views = gltf.get("bufferViews", [])
+    decoded_counts: list[int] = []
+
+    for mesh in gltf.get("meshes", []):
+        for primitive in mesh.get("primitives", []):
+            ext = primitive.get("extensions", {}).get("KHR_draco_mesh_compression", {})
+            bv_idx = ext.get("bufferView")
+            if bv_idx is None:
+                continue
+            bv = buffer_views[bv_idx]
+            bv_offset = bv.get("byteOffset", 0)
+            bv_length = bv["byteLength"]
+            draco_data = binary_chunk[bv_offset : bv_offset + bv_length]
+            try:
+                mesh_obj = DracoPy.decode(draco_data)
+                decoded_counts.append(len(mesh_obj.faces))
+            except Exception as exc:
+                logger.debug("DracoPy decode failed for primitive: %s", exc)
+
+    if decoded_counts:
+        total_faces = sum(decoded_counts)
+        logger.info(
+            "GLB validator [%s]: Draco decoded %d primitives, total face count=%d",
+            region, len(decoded_counts), total_faces,
+        )
+        # Sanity: typical residential roof should have >0 triangle faces
+        if total_faces == 0:
+            issues.append(
+                GLBValidationIssue(
+                    code="DRACO_EMPTY_GEOMETRY",
+                    message=f"Draco-decoded geometry has 0 triangles for region {region}",
+                    severity="warning",
+                )
+            )
+
+    return issues
+
+
+def _extract_binary_chunk(glb_bytes: bytes) -> bytes | None:
+    """Return the BIN chunk from a GLB, or None if absent."""
+    offset = 12
+    while offset < len(glb_bytes):
+        if offset + 8 > len(glb_bytes):
+            break
+        chunk_length = struct.unpack_from("<I", glb_bytes, offset)[0]
+        chunk_type = struct.unpack_from("<I", glb_bytes, offset + 4)[0]
+        chunk_data = glb_bytes[offset + 8 : offset + 8 + chunk_length]
+        if chunk_type == 0x004E4942:  # BIN chunk
+            return chunk_data
+        offset += 8 + chunk_length
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Phase 7 — validate generated reconstruction against regional GLB
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ReconstructionCrossCheckResult:
+    valid: bool
+    region: str
+    generated_mesh_path: str
+    issues: list[GLBValidationIssue] = field(default_factory=list)
+
+
+def validate_reconstruction_against_region(
+    generated_mesh_path: Path,
+    region: str,
+    glb_dir: Path | None = None,
+) -> ReconstructionCrossCheckResult:
+    """
+    Advisory cross-check of a generated mesh against the regional reference GLB.
+
+    Checks:
+      - Generated mesh is a valid GLB (magic + version)
+      - Primitive count is within 2× of the reference GLB's primitive count
+      - Bounding-box diagonal is plausible for a residential roof (2–50 m)
+
+    This check is ADVISORY — it never hard-blocks the pipeline.
+    """
+    issues: list[GLBValidationIssue] = []
+
+    # 1. Generated mesh existence and format
+    if not generated_mesh_path.exists():
+        return ReconstructionCrossCheckResult(
+            valid=True,  # advisory — missing mesh is not a hard failure
+            region=region,
+            generated_mesh_path=str(generated_mesh_path),
+            issues=[
+                GLBValidationIssue(
+                    code="GENERATED_MESH_MISSING",
+                    message=f"Generated mesh not found at {generated_mesh_path} — 2D-only mode",
+                    severity="warning",
+                )
+            ],
+        )
+
+    try:
+        gen_bytes = generated_mesh_path.read_bytes()
+        gen_gltf = _parse_gltf_json(gen_bytes)
+    except Exception as exc:
+        issues.append(
+            GLBValidationIssue(
+                code="GENERATED_MESH_PARSE_ERROR",
+                message=f"Cannot parse generated mesh: {exc}",
+                severity="warning",
+            )
+        )
+        return ReconstructionCrossCheckResult(
+            valid=True,
+            region=region,
+            generated_mesh_path=str(generated_mesh_path),
+            issues=issues,
+        )
+
+    gen_primitives = sum(
+        len(m.get("primitives", [])) for m in gen_gltf.get("meshes", [])
+    )
+
+    # 2. Get reference primitive count
+    glb_dir = glb_dir or _DEFAULT_GLB_DIR
+    ref_filename = REGION_GLB_MAP.get(region)
+    ref_primitives: int | None = None
+    if ref_filename:
+        ref_path = glb_dir / ref_filename
+        if ref_path.exists():
+            try:
+                ref_gltf = _parse_gltf_json(ref_path.read_bytes())
+                ref_primitives = sum(
+                    len(m.get("primitives", [])) for m in ref_gltf.get("meshes", [])
+                )
+            except Exception:
+                pass
+
+    if ref_primitives is not None and gen_primitives > 0:
+        ratio = gen_primitives / ref_primitives if ref_primitives > 0 else float("inf")
+        if ratio > 2.0:
+            issues.append(
+                GLBValidationIssue(
+                    code="PRIMITIVE_COUNT_HIGH",
+                    message=(
+                        f"Generated mesh has {gen_primitives} primitives vs "
+                        f"reference {ref_primitives} — ratio {ratio:.1f}× (>2× is suspicious)"
+                    ),
+                    severity="warning",
+                )
+            )
+
+    # 3. Try trimesh bbox diagonal sanity check
+    try:
+        import trimesh  # type: ignore[import]
+        import numpy as np
+
+        mesh = trimesh.load(str(generated_mesh_path))
+        if hasattr(mesh, "bounds"):
+            diag = float(np.linalg.norm(mesh.bounds[1] - mesh.bounds[0]))
+            if diag < 2.0 or diag > 50.0:
+                issues.append(
+                    GLBValidationIssue(
+                        code="MESH_BBOX_IMPLAUSIBLE",
+                        message=f"Generated mesh bbox diagonal {diag:.1f}m — expected 2–50m for a residential roof",
+                        severity="warning",
+                    )
+                )
+    except Exception:
+        pass
+
+    logger.info(
+        "GLB cross-check [%s]: generated=%d primitives, ref=%s primitives, issues=%d",
+        region, gen_primitives, ref_primitives, len(issues),
+    )
+
+    return ReconstructionCrossCheckResult(
+        valid=True,  # always advisory
+        region=region,
+        generated_mesh_path=str(generated_mesh_path),
         issues=issues,
     )

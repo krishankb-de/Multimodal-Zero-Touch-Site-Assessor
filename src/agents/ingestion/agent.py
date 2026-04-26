@@ -37,9 +37,11 @@ from src.agents.ingestion.media_handler import (
     validate_photo_format,
     validate_video_format,
 )
+from src.agents.ingestion.frame_extractor import extract_keyframes
 from src.agents.ingestion.prompts.pdf_prompt import PDF_EXTRACTION_PROMPT
 from src.agents.ingestion.prompts.photo_prompt import PHOTO_EXTRACTION_PROMPT
-from src.agents.ingestion.prompts.video_prompt import VIDEO_EXTRACTION_PROMPT
+from src.agents.ingestion.prompts.video_prompt import MULTI_FRAME_VIDEO_PROMPT, VIDEO_EXTRACTION_PROMPT
+from src.common.vision_provider import VisionProviderError, analyze_frames_with_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -111,15 +113,29 @@ async def _upload_and_generate(file_path: Path, prompt: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-async def process_video(file_path: Path) -> SpatialData:
+async def process_video(file_path: Path, run_id: str | None = None) -> SpatialData:
     """
     Process a roofline video and return structured SpatialData.
 
+    Extracts keyframes first, then uses the multi-frame vision provider chain
+    (Pioneer → Gemini). Falls back to single-blob Gemini if frame-based analysis fails.
+
     Raises:
         UnsupportedFormatError: immediately if the file extension is invalid.
-        IngestionError: after 3 failed retries on Gemini API errors.
+        IngestionError: after 3 failed retries.
     """
     validate_video_format(file_path)
+
+    import uuid as _uuid
+    effective_run_id = run_id or _uuid.uuid4().hex
+
+    # Extract keyframes — fall back to single-blob path if extraction fails
+    frames: list[Path] = []
+    try:
+        frames = extract_keyframes(file_path, effective_run_id)
+        logger.debug("process_video: extracted %d keyframes for run %s", len(frames), effective_run_id)
+    except Exception as exc:
+        logger.warning("process_video: frame extraction failed (%s) — using single-blob path", exc)
 
     last_exc: Exception | None = None
     for attempt, delay in enumerate([0] + _RETRY_DELAYS):
@@ -132,7 +148,15 @@ async def process_video(file_path: Path) -> SpatialData:
             )
             await asyncio.sleep(delay)
         try:
-            data = await _upload_and_generate(file_path, VIDEO_EXTRACTION_PROMPT)
+            if frames:
+                prompt = MULTI_FRAME_VIDEO_PROMPT.format(n_frames=len(frames))
+                data = await analyze_frames_with_fallback(frames, prompt)
+            else:
+                data = await _upload_and_generate(file_path, VIDEO_EXTRACTION_PROMPT)
+
+            # Strip per-face polygon_vertices_image — stored on faces but not yet in schema
+            _strip_extra_face_fields(data)
+
             confidence_score = float(data.pop("confidence_score", 0.0))
             metadata = IngestionMetadata(
                 source_type=SourceType.VIDEO,
@@ -143,7 +167,7 @@ async def process_video(file_path: Path) -> SpatialData:
             return SpatialData(**data, metadata=metadata)
         except UnsupportedFormatError:
             raise
-        except Exception as exc:
+        except (VisionProviderError, Exception) as exc:
             last_exc = exc
             logger.debug("process_video error on attempt %d: %s", attempt + 1, exc)
 
@@ -151,6 +175,13 @@ async def process_video(file_path: Path) -> SpatialData:
         source_type=SourceType.VIDEO,
         message=f"Failed after {len(_RETRY_DELAYS)} retries: {last_exc}",
     )
+
+
+def _strip_extra_face_fields(data: dict) -> None:
+    """Remove fields not yet in the Pydantic schema (phase-4 additions)."""
+    for face in data.get("roof", {}).get("faces", []):
+        face.pop("confidence_score", None)
+        face.pop("polygon_vertices_image", None)
 
 
 async def process_photo(file_path: Path) -> ElectricalData:

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from src.agents.orchestrator.agent import PipelineError, run_pipeline
+from src.common.artifact_store import mesh_path, point_cloud_path, run_dir
 from src.web.store import proposal_store
 
 router = APIRouter()
@@ -23,6 +25,9 @@ ALLOWED_PDF_TYPES = {"application/pdf"}
 class AssessResponse(BaseModel):
     pipeline_run_id: str
     status: str
+    mesh_uri: Optional[str] = None
+    point_cloud_uri: Optional[str] = None
+    reconstruction_confidence: Optional[float] = None
 
 
 @router.post("/assess", response_model=AssessResponse)
@@ -98,7 +103,14 @@ async def assess(
     # Store the proposal
     proposal_store[result.metadata.pipeline_run_id] = result
 
+    # Resolve 3D artifact URIs if available from the pipeline result
+    run_id = result.metadata.pipeline_run_id
+    mp = mesh_path(run_id)
+    pcp = point_cloud_path(run_id)
+
     return AssessResponse(
-        pipeline_run_id=result.metadata.pipeline_run_id,
+        pipeline_run_id=run_id,
         status="completed",
+        mesh_uri=f"/api/v1/artifacts/{run_id}/mesh.glb" if mp.exists() else None,
+        point_cloud_uri=f"/api/v1/artifacts/{run_id}/point_cloud.ply" if pcp.exists() else None,
     )

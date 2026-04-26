@@ -1,0 +1,10 @@
+{
+  "run_id": "94464ededfe844e1a0bec3277cc72b45",
+  "success": true,
+  "total_runtime_s": 0.0,
+  "tier": 3,
+  "tier_runtime_s": 0.5,
+  "confidence": 0.72,
+  "mesh_uri": "/Users/krish/Desktop/Projects/clean-repo/artifacts/94464ededfe844e1a0bec3277cc72b45/mesh.glb",
+  "point_cloud_uri": null
+}

@@ -1,0 +1,35 @@
+============================================================
+  SINGLE-LINE DIAGRAM — Zero-Touch Site Assessor
+  Pipeline Run: 52dfc008-f80c-408a-8bb1-803c7349b391
+============================================================
+
+  [PV Array: 6.4 kWp / 16 panels]
+         |
+         | DC
+         ↓
+  [Inverter (hybrid)]
+         |
+         | AC
+         ↓
+  ├── [Battery: 10.0 kWh]
+  |
+  [Main AC Bus / Consumer Distribution Board]
+         |
+         | ←→ Grid (bi-directional metering)
+         ↓
+  [Smart Meter / Main Meter]
+         |
+  [Grid]
+
+  Branch A: [Heat Pump: 10 kW air_source]
+  Branch B: [DHW Cylinder: 200 L]
+
+============================================================
+  NOTES
+============================================================
+  • Human installer sign-off required before proposal delivery
+  • Climate data: region=Hamburg, irradiance=960 kWh/m²/year, design_outdoor_temp=-12.0°C
+  • Pioneer SLM unavailable — using rule-based Reonic dataset pricing
+
+  Human sign-off: PENDING
+============================================================

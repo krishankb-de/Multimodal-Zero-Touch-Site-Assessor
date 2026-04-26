@@ -243,7 +243,14 @@ async def _execute_pipeline(
                 message=str(res),
             )
 
-    module_layout, electrical_assessment, thermal_load, behavioral_profile = domain_results
+    structural_result, electrical_assessment, thermal_load, behavioral_profile = domain_results
+
+    # structural agent now returns (ModuleLayout, face_shading_factors)
+    if isinstance(structural_result, tuple):
+        module_layout, face_shading_factors = structural_result
+    else:
+        module_layout = structural_result
+        face_shading_factors = None
 
     logger.info("[%s] Stage 2 — structural=%.1f kWp, electrical=%s, thermal=%.1f kW, behavioral=%s",
                 pipeline_run_id,
@@ -293,6 +300,7 @@ async def _execute_pipeline(
                 behavioral_profile=behavioral_profile,
                 consumption_data=consumption_data,
                 spatial_data=spatial_data,
+                face_shading_factors=face_shading_factors,
             ),
             AGENT_TIMEOUT_SECONDS,
         )

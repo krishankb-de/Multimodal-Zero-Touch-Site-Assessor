@@ -191,6 +191,9 @@ class RoofFace(BaseModel):
     area_m2: float = Field(ge=1)
     length_m: Optional[float] = Field(default=None, ge=0.5)
     width_m: Optional[float] = Field(default=None, ge=0.5)
+    # Phase 4 — 3D extension (nullable, backward compatible)
+    polygon_vertices_3d: Optional[list[list[float]]] = None
+    polygon_vertices_image: Optional[list[list[float]]] = None
 
 
 class Obstacle(BaseModel):
@@ -230,6 +233,10 @@ class SpatialData(BaseModel):
     roof: RoofData
     utility_room: UtilityRoom
     metadata: IngestionMetadata
+    # Phase 4 — 3D reconstruction artifacts (nullable, backward compatible)
+    mesh_uri: Optional[str] = None
+    point_cloud_uri: Optional[str] = None
+    reconstruction_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
 # ============================================================================

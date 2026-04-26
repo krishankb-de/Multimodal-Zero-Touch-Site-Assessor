@@ -3,6 +3,9 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 export interface AssessResponse {
   pipeline_run_id: string;
   status: string;
+  mesh_uri?: string | null;
+  point_cloud_uri?: string | null;
+  reconstruction_confidence?: number | null;
 }
 
 export async function uploadMedia(

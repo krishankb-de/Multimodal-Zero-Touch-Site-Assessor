@@ -1,0 +1,34 @@
+============================================================
+  SINGLE-LINE DIAGRAM — Zero-Touch Site Assessor
+  Pipeline Run: d9caa8d4-37d4-40ab-b660-e5e6d67f559c
+============================================================
+
+  [PV Array: 3.2 kWp / 8 panels (JA Solar JAM54S30-400)]
+         |
+         | DC
+         ↓
+  [Inverter (three_phase) — SolarEdge SE6000H]
+         |
+         | AC
+         ↓
+  ├── [Battery: 5.6 kWh (BYD HVS 10.2)]
+  |
+  [Main AC Bus / Consumer Distribution Board]
+         |
+         | ←→ Grid (bi-directional metering)
+         ↓
+  [Smart Meter / Main Meter]
+         |
+  [Grid]
+
+  Branch A: [Heat Pump: 4 kW air_source (Vaillant aroTHERM plus 10)]
+  Branch B: [DHW Cylinder: 150 L]
+
+============================================================
+  NOTES
+============================================================
+  • Human installer sign-off required before proposal delivery
+  • Climate data: region=Hamburg, irradiance=960 kWh/m²/year, design_outdoor_temp=-12.0°C
+
+  Human sign-off: PENDING
+============================================================

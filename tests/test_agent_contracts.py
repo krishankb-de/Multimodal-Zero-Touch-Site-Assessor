@@ -256,12 +256,12 @@ def _round_trip(model, schema_cls):
 
 class TestStructuralAgentContract:
     def test_output_passes_safety_gate(self):
-        result = structural_agent.run(_spatial_data())
+        result, _ = structural_agent.run(_spatial_data())
         _, vr = validate_handoff(result.model_dump(mode="json"), "ModuleLayout", "structural")
         assert vr.valid, f"Safety gate rejected: {[e.message for e in vr.errors]}"
 
     def test_round_trip(self):
-        result = structural_agent.run(_spatial_data())
+        result, _ = structural_agent.run(_spatial_data())
         reloaded = _round_trip(result, ModuleLayout)
         assert reloaded.total_kwp == result.total_kwp
         assert reloaded.total_panels == result.total_panels
@@ -272,12 +272,12 @@ class TestStructuralAgentContract:
         spatial_no_obs.roof.obstacles.clear()
         spatial_no_obs.roof.obstacles  # empty list now
 
-        layout_with = structural_agent.run(_spatial_data())
-        layout_without = structural_agent.run(spatial_no_obs)
+        layout_with, _ = structural_agent.run(_spatial_data())
+        layout_without, _ = structural_agent.run(spatial_no_obs)
         assert layout_with.total_panels <= layout_without.total_panels
 
     def test_string_voltage_within_limit(self):
-        result = structural_agent.run(_spatial_data())
+        result, _ = structural_agent.run(_spatial_data())
         for s in result.string_config.strings:
             assert s.voc_string_V <= 1000, f"String {s.string_id} exceeds 1000V DC"
 

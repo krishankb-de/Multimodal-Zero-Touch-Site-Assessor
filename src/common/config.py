@@ -46,6 +46,18 @@ class MarketConfig:
 
 
 @dataclass(frozen=True)
+class ReconstructionConfig:
+    """3D reconstruction settings."""
+
+    budget_s: int = field(
+        default_factory=lambda: int(os.getenv("RECONSTRUCTION_BUDGET_S", "90"))
+    )
+    vision_provider: str = field(
+        default_factory=lambda: os.getenv("VISION_PROVIDER", "gemini")
+    )
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """Root application configuration."""
 
@@ -54,6 +66,7 @@ class AppConfig:
     gemini: GeminiConfig = field(default_factory=GeminiConfig)
     pioneer: PioneerConfig = field(default_factory=PioneerConfig)
     market: MarketConfig = field(default_factory=MarketConfig)
+    reconstruction: ReconstructionConfig = field(default_factory=ReconstructionConfig)
 
 
 # Singleton instance

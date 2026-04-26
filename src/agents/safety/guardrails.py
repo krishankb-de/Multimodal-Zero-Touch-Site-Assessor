@@ -89,12 +89,33 @@ def _check_spatial_data(
     errors: list[ValidationError],
     warnings: list[str],
 ) -> None:
-    # Confidence floor
+    # Confidence floor — global
     if data.metadata.confidence_score < MIN_CONFIDENCE_SCORE:
         warnings.append(
             f"Low confidence score ({data.metadata.confidence_score:.2f}) — "
             "flag for manual review"
         )
+
+    # Phase 4: mesh-presence guardrail — if mesh provided, ≥80% faces need 3D polygons
+    if data.mesh_uri:
+        faces_with_3d = sum(
+            1 for f in data.roof.faces if f.polygon_vertices_3d is not None
+        )
+        total_faces = len(data.roof.faces)
+        if total_faces > 0:
+            ratio = faces_with_3d / total_faces
+            if ratio < 0.8:
+                errors.append(
+                    ValidationError(
+                        code="MISSING_3D_POLYGONS",
+                        message=(
+                            f"mesh_uri is set but only {faces_with_3d}/{total_faces} faces "
+                            f"({ratio:.0%}) have polygon_vertices_3d — required ≥80%"
+                        ),
+                        field="roof.faces",
+                        severity=ErrorSeverity.ERROR,
+                    )
+                )
 
     # Total usable area must not exceed sum of face areas
     face_area_sum = sum(f.area_m2 for f in data.roof.faces)

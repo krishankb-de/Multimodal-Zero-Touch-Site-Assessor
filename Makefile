@@ -9,14 +9,15 @@ UVICORN := $(VENV)/bin/uvicorn
 
 FRONTEND_DIR := src/web/frontend
 
-.PHONY: help setup test test-live lint typecheck dev frontend clean
+.PHONY: help setup test test-live test-live-video lint typecheck dev frontend clean
 
 help:
 	@echo "Usage: make <target>"
 	@echo ""
 	@echo "  setup      Create .venv and install all dependencies"
 	@echo "  test       Run full test suite (offline, no API keys needed)"
-	@echo "  test-live  Run live integration tests (requires GEMINI_API_KEY)"
+	@echo "  test-live       Run live integration tests (requires GEMINI_API_KEY)"
+	@echo "  test-live-video Run 3D pipeline live test (requires GEMINI_API_KEY + VIDEO_PATH)"
 	@echo "  lint       Run ruff linter"
 	@echo "  typecheck  Run mypy strict type check"
 	@echo "  dev        Start FastAPI backend (hot-reload, port 8000)"
@@ -41,6 +42,16 @@ test-live:
 		echo "Error: GEMINI_API_KEY is not set"; exit 1; \
 	fi
 	$(PYTEST) tests/test_integration_live.py -v
+
+test-live-video:
+	@if [ -z "$$GEMINI_API_KEY" ]; then \
+		echo "Error: GEMINI_API_KEY is not set"; exit 1; \
+	fi
+	@if [ -z "$$VIDEO_PATH" ]; then \
+		echo "Error: VIDEO_PATH is not set (e.g. make test-live-video VIDEO_PATH=/path/to/roof.mp4)"; exit 1; \
+	fi
+	$(PYTEST) tests/test_integration_live.py -v -k "video" \
+		--video-path="$$VIDEO_PATH"
 
 # ── Quality checks ───────────────────────────────────────────────────────────
 

@@ -58,6 +58,23 @@ def _build_customer_profile(
     )
 
 
+def _compute_shading_multiplier(
+    module_layout: ModuleLayout,
+    face_shading_factors: dict[str, float] | None,
+) -> float:
+    """Weighted-average shading factor across all faces (by panel count)."""
+    if not face_shading_factors:
+        return 1.0
+    total_panels = sum(f.count for f in module_layout.panels)
+    if total_panels == 0:
+        return 1.0
+    weighted = sum(
+        face_shading_factors.get(f.face_id, 1.0) * f.count
+        for f in module_layout.panels
+    )
+    return weighted / total_panels
+
+
 async def run(
     module_layout: ModuleLayout,
     thermal_load: ThermalLoad,
@@ -65,6 +82,7 @@ async def run(
     behavioral_profile: BehavioralProfile,
     consumption_data: ConsumptionData | None = None,
     spatial_data: SpatialData | None = None,
+    face_shading_factors: dict[str, float] | None = None,
 ) -> FinalProposal:
     """
     Assemble a FinalProposal from all domain agent outputs.
@@ -93,7 +111,9 @@ async def run(
     # 2. System design
     # ------------------------------------------------------------------
     region = config.market.region
-    annual_yield_kwh = climate_data.annual_pv_yield_kwh(module_layout.total_kwp, region)
+    # Apply per-face shading correction when available (weighted by panel count per face)
+    shading_multiplier = _compute_shading_multiplier(module_layout, face_shading_factors)
+    annual_yield_kwh = climate_data.annual_pv_yield_kwh(module_layout.total_kwp, region) * shading_multiplier
 
     pv = PVDesign(
         total_kwp=module_layout.total_kwp,

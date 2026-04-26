@@ -1,8 +1,15 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { getProposal, signoffProposal, type FinalProposal } from "@/lib/api";
+
+// Dynamically imported — three.js is heavy and SSR-incompatible
+const RoofMeshViewer = dynamic(
+  () => import("@/app/components/RoofMeshViewer"),
+  { ssr: false }
+);
 
 export default function ProposalDetailPage() {
   const params = useParams();
@@ -92,6 +99,9 @@ export default function ProposalDetailPage() {
           </p>
         )}
       </div>
+
+      {/* 3D Roof viewer — shown only when reconstruction succeeded (P6.4) */}
+      <RoofMeshViewer meshUri={`/api/v1/artifacts/${id}/mesh.glb`} />
 
       {/* System Design */}
       <section className="bg-white rounded-lg shadow p-6 mb-6">
