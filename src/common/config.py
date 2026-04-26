@@ -58,6 +58,21 @@ class ReconstructionConfig:
 
 
 @dataclass(frozen=True)
+class AuthConfig:
+    """Installer API-key authentication settings."""
+
+    # Comma-separated list of valid installer Bearer tokens.
+    # Example: INSTALLER_API_KEYS=key-abc123,key-def456
+    api_keys: frozenset[str] = field(
+        default_factory=lambda: frozenset(
+            k.strip()
+            for k in os.getenv("INSTALLER_API_KEYS", "").split(",")
+            if k.strip()
+        )
+    )
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """Root application configuration."""
 
@@ -67,6 +82,7 @@ class AppConfig:
     pioneer: PioneerConfig = field(default_factory=PioneerConfig)
     market: MarketConfig = field(default_factory=MarketConfig)
     reconstruction: ReconstructionConfig = field(default_factory=ReconstructionConfig)
+    auth: AuthConfig = field(default_factory=AuthConfig)
 
 
 # Singleton instance
