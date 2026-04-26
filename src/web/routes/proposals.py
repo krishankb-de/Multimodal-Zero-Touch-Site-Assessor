@@ -8,11 +8,23 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from src.common.schemas import FinalProposal, SignoffStatus
+from src.common.schemas import FinalProposal, SignoffStatus, WeatherProfile
 from src.web.auth import require_installer_auth
-from src.web.store import proposal_store
+from src.web.store import proposal_store, weather_store
 
 router = APIRouter()
+
+
+@router.get("/proposals/{pipeline_run_id}/weather", response_model=WeatherProfile)
+async def get_weather(pipeline_run_id: str) -> WeatherProfile:
+    """Return the WeatherProfile computed during the pipeline run, if available."""
+    profile = weather_store.get(pipeline_run_id)
+    if profile is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Weather profile for run '{pipeline_run_id}' not available",
+        )
+    return profile
 
 
 @router.get("/proposals/{pipeline_run_id}", response_model=FinalProposal)

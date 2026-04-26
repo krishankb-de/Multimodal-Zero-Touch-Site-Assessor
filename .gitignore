@@ -1,24 +1,26 @@
-# Environment
+# ── Environment ───────────────────────────────────────────────────────────────
 .env
 .env.local
 .env.*.local
 
-#kiro
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDEs ──────────────────────────────────────────────────────────────────────
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
 .kiro/
 
-#sld_output
-sld_output/
-
-# Python
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 *.egg
 *.egg-info/
-dist/
-build/
-.eggs/
 .venv/
 venv/
 env/
@@ -26,7 +28,12 @@ env/
 pip-log.txt
 pip-delete-this-directory.txt
 
-# Testing
+# ── Python build / packaging ──────────────────────────────────────────────────
+dist/
+build/
+.eggs/
+
+# ── Testing & coverage ────────────────────────────────────────────────────────
 .pytest_cache/
 .coverage
 .coverage.*
@@ -38,41 +45,39 @@ coverage.xml
 nosetests.xml
 pytest.xml
 
-# Type checking / linting
+# ── Type checking / linting ───────────────────────────────────────────────────
 .mypy_cache/
 .dmypy.json
 dmypy.json
 .ruff_cache/
 
-# Jupyter
-.ipynb_checkpoints/
-*.ipynb
-
-# Node / Next.js
+# ── Node / TanStack Start / Vite ──────────────────────────────────────────────
 node_modules/
 .next/
 out/
 .npm
 *.tsbuildinfo
 next-env.d.ts
+dist-ssr/
+.output/
+.vinxi/
+.nitro/
+.tanstack/
 
-# Build output
-dist/
-build/
+# ── Cloudflare / Wrangler ─────────────────────────────────────────────────────
+.wrangler/
+.dev.vars
 
-# OS
-.DS_Store
-Thumbs.db
+# ── Pipeline runtime artifacts ────────────────────────────────────────────────
+artifacts/
+sld_output/
+data/
 
-# IDEs
-.vscode/settings.json
-.idea/
-*.swp
-*.swo
-
-# Logs
+# ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
 logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*

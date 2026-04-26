@@ -56,6 +56,7 @@ class PipelineSuccess:
 
     proposal: FinalProposal
     weather_profile_available: bool = False
+    weather_profile: WeatherProfile | None = None
 
     # Proxy attribute access to the underlying proposal for backward compatibility
     def __getattr__(self, name: str) -> object:
@@ -456,4 +457,5 @@ async def _execute_pipeline(
     return PipelineSuccess(
         proposal=final_proposal,
         weather_profile_available=weather_profile is not None,
+        weather_profile=weather_profile,
     )
