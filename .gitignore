@@ -3,6 +3,12 @@
 .env.local
 .env.*.local
 
+#kiro
+.kiro/
+
+#sld_output
+sld_output/
+
 # Python
 __pycache__/
 *.py[cod]
