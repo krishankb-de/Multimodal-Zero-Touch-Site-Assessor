@@ -37,7 +37,7 @@ No proposal reaches the customer without an installer approving it.
 ```
                        ┌─────────────────────────────────────┐
  Video ──►             │           INGESTION AGENT            │
- Photo ──►  ──────────►│  Gemini 1.5 Pro (multimodal)        │
+ Photo ──►  ──────────►│  Gemini 2.5 Flash (multimodal)      │
  PDF   ──►             │  Frame extraction → 3D reconstruction│
                        └──────────────┬──────────────────────┘
                                       │ SpatialData / ElectricalData / ConsumptionData
@@ -109,14 +109,14 @@ The generated `.glb` mesh is served to the frontend and rendered as an interacti
 | Backend | Python 3.12, FastAPI, Pydantic v2 (strict mode) |
 | Frontend | Next.js 14, React 18, TypeScript, Tailwind CSS |
 | 3D Viewer | Three.js, @react-three/fiber, @react-three/drei |
-| AI (multimodal) | Google Gemini 1.5 Pro via `google-genai` SDK |
+| AI (multimodal) | Google Gemini 2.5 Flash via `google-genai` SDK (configurable via `GEMINI_MODEL_NAME`) |
 | AI (pricing/design) | Pioneer SLM (`deepseek-ai/DeepSeek-V3.1`) |
 | 3D Reconstruction | pycolmap (optional), trimesh, OpenCV |
 | Layout Engine | Shapely (polygon clipping), custom Sutherland-Hodgman |
 | Shading | Hand-rolled sun-path model (Spencer equations) |
 | Thermal calc | DIN EN 12831 simplified |
 | Validation | JSON Schema Draft 2020-12, Pydantic strict mode |
-| Testing | pytest, pytest-asyncio (256 tests) |
+| Testing | pytest, pytest-asyncio (273 tests) |
 
 ---
 
@@ -407,7 +407,7 @@ clean-repo/
 
 ```bash
 make setup          # Create .venv and install all dependencies
-make test           # Run full offline test suite (256 tests)
+make test           # Run full offline test suite (273 tests)
 make test-live      # Run live Gemini API tests (needs GEMINI_API_KEY)
 make test-live-video VIDEO_PATH=/path/to/roof.mp4
                     # Run full 3D pipeline against a real video
