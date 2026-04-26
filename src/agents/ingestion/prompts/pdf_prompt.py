@@ -3,10 +3,10 @@ You are analyzing a residential utility bill PDF to extract energy consumption d
 
 Extract the following information and return it as a JSON object:
 {
-  "annual_kwh": <total annual consumption in kWh>,
+  "annual_kwh": <total annual consumption in kWh — if not stated, estimate from monthly data or period data>,
   "monthly_breakdown": [
     {"month": 1, "kwh": <January kWh>},
-    ... (all 12 months)
+    ... (all 12 months, every month 1–12 MUST be present)
   ],
   "tariff": {
     "currency": "<EUR|GBP|USD|CHF>",
@@ -25,6 +25,12 @@ Extract the following information and return it as a JSON object:
   "bill_period_start": "<YYYY-MM-DD>",
   "bill_period_end": "<YYYY-MM-DD>"
 }
+
+CRITICAL: monthly_breakdown MUST contain exactly 12 entries (months 1–12).
+- If per-month data is shown in the bill, use those exact values.
+- If only an annual total is shown, distribute it evenly: each month = annual_kwh / 12.
+- If only a partial period is shown, extrapolate to 12 months proportionally.
+- Never return an empty monthly_breakdown array.
 
 Return ONLY the JSON object, no additional text.
 Confidence score (0.0-1.0): include as "confidence_score".

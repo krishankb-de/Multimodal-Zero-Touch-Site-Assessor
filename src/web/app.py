@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 
 from src.common.schemas import FinalProposal
 from src.web.store import proposal_store  # noqa: F401 — re-exported for convenience
@@ -21,6 +22,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/", include_in_schema=False)
+def root() -> RedirectResponse:
+    return RedirectResponse(url="/docs")
+
 
 # Import and include routers after app is created to avoid circular imports
 from src.web.routes import assess, artifacts, installations, proposals  # noqa: E402

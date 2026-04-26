@@ -292,6 +292,19 @@ async def process_pdf(file_path: Path) -> ConsumptionData:
             confidence_score = float(data.pop("confidence_score", 0.0))
             bill_period_start = data.pop("bill_period_start", None)
             bill_period_end = data.pop("bill_period_end", None)
+
+            # Synthesize monthly breakdown if Gemini couldn't extract it
+            monthly = data.get("monthly_breakdown") or []
+            if len(monthly) < 12:
+                annual = float(data.get("annual_kwh") or 3600)
+                per_month = round(annual / 12, 1)
+                data["monthly_breakdown"] = [{"month": m, "kwh": per_month} for m in range(1, 13)]
+                logger.warning(
+                    "process_pdf: monthly_breakdown incomplete (%d months) — synthesised uniform distribution from annual_kwh=%.0f",
+                    len(monthly),
+                    annual,
+                )
+
             metadata = IngestionMetadata(
                 source_type=SourceType.PDF,
                 confidence_score=confidence_score,

@@ -1,4 +1,3 @@
-import "@google/model-viewer";
 import { createFileRoute } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import {
@@ -93,6 +92,10 @@ function RoofViewer({ runId, panelCount, inverterType }: {
   panelCount: number | undefined;
   inverterType: string | undefined;
 }) {
+  useEffect(() => {
+    import("@google/model-viewer");
+  }, []);
+
   const [meshFailed, setMeshFailed] = useState(false);
   const meshUri = runId ? artifactUrl(runId, "mesh.glb") : null;
   const showModel = meshUri && !meshFailed;
