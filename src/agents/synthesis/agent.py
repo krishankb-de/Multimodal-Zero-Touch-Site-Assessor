@@ -218,6 +218,7 @@ async def run(
     spatial_data: SpatialData | None = None,
     face_shading_factors: dict[str, float] | None = None,
     weather_profile: Optional[WeatherProfile] = None,
+    pipeline_run_id: Optional[str] = None,
 ) -> FinalProposal:
     """
     Assemble a FinalProposal from all domain agent outputs.
@@ -356,7 +357,7 @@ async def run(
     # ------------------------------------------------------------------
     # 6. Metadata
     # ------------------------------------------------------------------
-    run_id = str(uuid.uuid4())
+    run_id = pipeline_run_id or str(uuid.uuid4())
     metadata = ProposalMetadata(
         pipeline_run_id=run_id,
         version="1.0.0",

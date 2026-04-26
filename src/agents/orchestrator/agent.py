@@ -199,7 +199,10 @@ async def _execute_pipeline(
     stage1_start = datetime.now(timezone.utc)
 
     ingestion_coros = [
-        asyncio.wait_for(ingestion_agent.process_video(video_path), AGENT_TIMEOUT_SECONDS),
+        asyncio.wait_for(
+            ingestion_agent.process_video(video_path, run_id=pipeline_run_id),
+            AGENT_TIMEOUT_SECONDS,
+        ),
         asyncio.wait_for(ingestion_agent.process_photo(photo_path), AGENT_TIMEOUT_SECONDS),
         asyncio.wait_for(ingestion_agent.process_pdf(pdf_path), AGENT_TIMEOUT_SECONDS),
     ]
@@ -402,6 +405,7 @@ async def _execute_pipeline(
                 spatial_data=spatial_data,
                 face_shading_factors=face_shading_factors,
                 weather_profile=weather_profile,
+                pipeline_run_id=pipeline_run_id,
             ),
             AGENT_TIMEOUT_SECONDS,
         )

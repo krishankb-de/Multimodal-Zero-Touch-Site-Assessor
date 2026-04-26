@@ -42,6 +42,7 @@ from src.agents.ingestion.prompts.pdf_prompt import PDF_EXTRACTION_PROMPT
 from src.agents.ingestion.prompts.photo_prompt import PHOTO_EXTRACTION_PROMPT
 from src.agents.ingestion.prompts.video_prompt import MULTI_FRAME_VIDEO_PROMPT, VIDEO_EXTRACTION_PROMPT
 from src.agents.ingestion.dimension_estimator import estimate_dimensions
+from src.agents.ingestion.reconstruction import reconstruct_mesh
 from src.common.vision_provider import VisionProviderError, analyze_frames_with_fallback
 
 logger = logging.getLogger(__name__)
@@ -178,6 +179,32 @@ async def process_video(file_path: Path, run_id: str | None = None) -> SpatialDa
                     )
 
             spatial_data = SpatialData(**data, metadata=metadata, house_dimensions=house_dimensions)
+
+            # Attempt 3D mesh reconstruction from keyframes (Tier 1–3, silent Tier 4 fallback)
+            if frames:
+                try:
+                    recon = await reconstruct_mesh(
+                        frames,
+                        effective_run_id,
+                        spatial_data.model_dump(mode="json"),
+                    )
+                    if recon is not None:
+                        spatial_data = spatial_data.model_copy(update={
+                            "mesh_uri": recon.mesh_uri if recon.mesh_uri else None,
+                            "point_cloud_uri": recon.point_cloud_uri,
+                            "reconstruction_confidence": recon.confidence,
+                        })
+                        logger.info(
+                            "process_video: 3D reconstruction complete (tier=%d, confidence=%.2f)",
+                            recon.tier,
+                            recon.confidence,
+                        )
+                except Exception as recon_exc:
+                    logger.warning(
+                        "process_video: 3D reconstruction failed: %s — continuing in 2D-only mode",
+                        recon_exc,
+                    )
+
             return spatial_data
         except UnsupportedFormatError:
             raise

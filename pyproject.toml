@@ -21,6 +21,7 @@ dependencies = [
     "trimesh>=4.4",
     "shapely>=2.0",
     "pvlib>=0.11",
+    "sqlalchemy>=2.0",
 ]
 
 [project.optional-dependencies]
