@@ -208,25 +208,43 @@ async def reconstruct_mesh(
     Attempt 3D reconstruction in tier order. Returns None on total failure (Tier 4).
     Emits reconstruction.json regardless of outcome.
     """
-    budget_s = config.reconstruction.budget_s
+    budget_s = max(1, int(config.reconstruction.budget_s))
     frames_dir = frames[0].parent if frames else run_dir(run_id) / "frames"
     t0 = time.monotonic()
+    deadline = t0 + float(budget_s)
 
     result: Optional[ReconstructionResult] = None
 
     # Tier 1
     if frames_dir.is_dir() and frames:
+        remaining = max(1, int(deadline - time.monotonic()))
         result = await asyncio.get_event_loop().run_in_executor(
-            None, _try_sfm, frames_dir, run_id, budget_s
+            None, _try_sfm, frames_dir, run_id, remaining
         )
 
     # Tier 2
     if result is None and frames:
-        result = await _try_pioneer(frames, spatial_data_dict or {})
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            try:
+                result = await asyncio.wait_for(
+                    _try_pioneer(frames, spatial_data_dict or {}),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Tier 2: budget exceeded before completion")
 
     # Tier 3
     if result is None and frames:
-        result = await _try_gemini_depth(frames, run_id)
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            try:
+                result = await asyncio.wait_for(
+                    _try_gemini_depth(frames, run_id),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Tier 3: budget exceeded before completion")
 
     # Tier 4 — silent 2D fallback
     if result is None:

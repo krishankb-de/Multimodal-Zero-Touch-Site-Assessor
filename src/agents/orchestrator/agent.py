@@ -227,12 +227,17 @@ async def _execute_pipeline(
             duration = (datetime.now(timezone.utc) - stage1_start).total_seconds()
             error_type = "timeout" if isinstance(res, asyncio.TimeoutError) else "agent_exception"
             logger.error("[%s] Ingestion failed after %.1fs: %s", pipeline_run_id, duration, res)
+            message = (
+                f"Ingestion stage timed out after {AGENT_TIMEOUT_SECONDS}s"
+                if isinstance(res, asyncio.TimeoutError)
+                else str(res)
+            )
             return PipelineError(
                 pipeline_run_id=pipeline_run_id,
                 stage=PipelineStage.INGESTION.value,
                 agent_name="ingestion",
                 error_type=error_type,
-                message=str(res),
+                message=message,
             )
 
     spatial_data, electrical_data, consumption_data = ingestion_results

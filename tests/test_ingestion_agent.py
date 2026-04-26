@@ -218,6 +218,27 @@ class TestGeminiAPICallsMocked:
         assert len(result.breakers) == 2
 
     @pytest.mark.asyncio
+    async def test_process_photo_sanitizes_missing_breaker_ratings(self, tmp_path):
+        """process_photo should normalize malformed breaker rows instead of failing validation."""
+        f = _make_temp_file(tmp_path, "panel.jpg")
+        payload = {
+            "confidence_score": 0.85,
+            "main_supply": {"amperage_A": 80, "phases": 1, "voltage_V": 230},
+            "breakers": [
+                {"label": "Sockets 16A", "rating_A": None, "type": "MCB"},
+                {"label": "Lighting", "rating_A": None, "type": "unknown"},
+            ],
+            "board_condition": "fair",
+            "spare_ways": 2,
+        }
+        with patch(UPLOAD_AND_GENERATE, new=AsyncMock(return_value=payload)):
+            result = await process_photo(f)
+
+        assert isinstance(result, ElectricalData)
+        assert len(result.breakers) >= 1
+        assert all(isinstance(b.rating_A, int) for b in result.breakers)
+
+    @pytest.mark.asyncio
     async def test_process_pdf_returns_consumption_data(self, tmp_path):
         """process_pdf must return a ConsumptionData instance."""
         f = _make_temp_file(tmp_path, "bill.pdf")

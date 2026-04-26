@@ -58,6 +58,8 @@ _client = genai.Client(api_key=config.gemini.api_key)
 # ---------------------------------------------------------------------------
 
 _RETRY_DELAYS = [1, 2, 4]  # seconds — exponential backoff for 3 retries
+_VALID_BREAKER_RATINGS = frozenset({6, 10, 13, 16, 20, 25, 32, 40, 50, 63, 80, 100, 125})
+_BREAKER_RATING_RE = re.compile(r"\b(6|10|13|16|20|25|32|40|50|63|80|100|125)\s*A?\b", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +227,85 @@ def _strip_extra_face_fields(data: dict) -> None:
         face.pop("polygon_vertices_image", None)
 
 
+def _coerce_breaker_rating(*candidates: object) -> int | None:
+    """Extract a valid standard breaker rating from mixed model output."""
+    for value in candidates:
+        if isinstance(value, int) and value in _VALID_BREAKER_RATINGS:
+            return value
+        if isinstance(value, float):
+            as_int = int(value)
+            if float(as_int) == value and as_int in _VALID_BREAKER_RATINGS:
+                return as_int
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                continue
+            if value.isdigit():
+                as_int = int(value)
+                if as_int in _VALID_BREAKER_RATINGS:
+                    return as_int
+            match = _BREAKER_RATING_RE.search(value)
+            if match:
+                return int(match.group(1))
+    return None
+
+
+def _sanitize_electrical_payload(data: dict) -> None:
+    """Normalize flaky LLM breaker rows so ElectricalData validation remains robust."""
+    raw_breakers = data.get("breakers")
+    if not isinstance(raw_breakers, list):
+        return
+
+    sanitized: list[dict] = []
+    for idx, raw in enumerate(raw_breakers):
+        if not isinstance(raw, dict):
+            continue
+
+        rating = _coerce_breaker_rating(
+            raw.get("rating_A"),
+            raw.get("label"),
+            raw.get("circuit_description"),
+        )
+        if rating is None:
+            logger.warning("process_photo: dropped breaker %d due to missing/invalid rating", idx)
+            continue
+
+        breaker_type_raw = raw.get("type")
+        if isinstance(breaker_type_raw, str):
+            t = breaker_type_raw.strip()
+            upper = t.upper()
+            if upper in {"MCB", "RCBO", "RCD", "MCCB"}:
+                breaker_type = upper
+            elif t.lower() == "isolator":
+                breaker_type = "isolator"
+            else:
+                breaker_type = "unknown"
+        else:
+            breaker_type = "unknown"
+
+        sanitized.append(
+            {
+                "label": str(raw.get("label") or f"Circuit {idx + 1}"),
+                "rating_A": rating,
+                "type": breaker_type,
+                "circuit_description": raw.get("circuit_description"),
+            }
+        )
+
+    if not sanitized:
+        logger.warning("process_photo: no valid breakers parsed — using a conservative fallback row")
+        sanitized = [
+            {
+                "label": "Unknown circuit",
+                "rating_A": 16,
+                "type": "unknown",
+                "circuit_description": "Auto-generated fallback after parsing failures",
+            }
+        ]
+
+    data["breakers"] = sanitized
+
+
 async def process_photo(file_path: Path) -> ElectricalData:
     """
     Process an electrical panel photo and return structured ElectricalData.
@@ -247,6 +328,7 @@ async def process_photo(file_path: Path) -> ElectricalData:
             await asyncio.sleep(delay)
         try:
             data = await _upload_and_generate(file_path, PHOTO_EXTRACTION_PROMPT)
+            _sanitize_electrical_payload(data)
             confidence_score = float(data.pop("confidence_score", 0.0))
             metadata = IngestionMetadata(
                 source_type=SourceType.PHOTO,
